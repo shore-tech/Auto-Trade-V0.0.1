@@ -1,0 +1,13 @@
+futu-api==8.6.4608
+numpy==2.1.2
+pandas==2.2.3
+protobuf==3.20.3
+psycopg2==2.9.10
+pycryptodome==3.21.0
+python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
+pytz==2024.2
+simplejson==3.19.3
+six==1.16.0
+termcolor==2.5.0
+tzdata==2024.2
