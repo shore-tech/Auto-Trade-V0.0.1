@@ -32,7 +32,7 @@ class GoldenCrossEnhanceStop:
         table  = "golden_cross_es.kline"
         cur.execute(
             f"""
-            INSERT INTO {table} (time_key, code, open, high, low, close, volume)
+            INSERT INTO {table} (time_key, code, open, high, low, close, volume, k_type)
             VALUES {data};
             """
         )
@@ -75,8 +75,11 @@ class GoldenCrossEnhanceStop:
             data_type, data = self.data_q.get()
             match data_type:
                 case "k_line":
-                    if (last_k_record is not None) and (data[0] != last_k_record[0]):
-                            self.insert_kl_data(data)
+                    if last_k_record is None:
+                        pass
+                    else:
+                        if data[0] != last_k_record[0]:
+                            self.insert_kl_data(last_k_record)
                     last_k_record = data
                     print_color = 'green'
                 case "bid_ask":

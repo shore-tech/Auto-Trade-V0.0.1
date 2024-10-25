@@ -13,9 +13,9 @@ class CurKline(CurKlineHandlerBase):
             low = float(data["low"][0])
             close = float(data["close"][0])
             volume = int(data["volume"][0])
-            # k_type = data["k_type"][0]
-            # self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume, k_type)))
-            self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume)))
+            k_type = data["k_type"][0]
+            self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume, k_type)))
+            # self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume)))
 
 
 class CurBidAsk(OrderBookHandlerBase):
