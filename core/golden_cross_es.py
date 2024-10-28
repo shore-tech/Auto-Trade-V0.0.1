@@ -59,20 +59,17 @@ class GoldenCrossEnhanceStop:
         # calculate the short and long moving averages
         # determine the signals
         # insert the data into psql
-        print(f'size of last_k_record: {len(self.last_k_record)}')
-        print(f'long window: {self.long_window}')
 
         self.last_k_record.append(list(last_k_dummy))
         if len(self.last_k_record) > self.long_window + 1:
-            # remove the oldest record
-            del self.last_k_record[0]
+            del self.last_k_record[0]                       # remove the oldest record -> keep the size of last_k-records always < long_window + 1
 
-        if len(self.last_k_record) < self.long_window:
+        if len(self.last_k_record) < self.long_window:      # not enough data to calculate sma
             sma_short = None
             sma_long  = None
             signal     = 0
             pass
-        else:
+        else:                                               # calculate sma and signal
             short_window = self.last_k_record[-self.short_window:]
             long_window  = self.last_k_record[-self.long_window:]
             sma_short   = sum([record[5] for record in short_window]) / self.short_window
@@ -126,6 +123,8 @@ class GoldenCrossEnhanceStop:
                             cur_signal = self.generate_signals(last_k_dummy)
                     last_k_dummy = data
                 case "bid_ask":
+                    if cur_signal != 0:
+                        self.action_on_signals()
                     pass
 
 
