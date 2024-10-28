@@ -16,5 +16,9 @@ if __name__ == '__main__':
             "stop_profit": 0.03,
         }
     )
-
     su.run()
+    # record = su.read_last_record("golden_cross_es.kline", 20)
+    # print(type(record))
+    # print(len(record))
+
+
