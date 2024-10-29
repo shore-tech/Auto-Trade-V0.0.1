@@ -1,4 +1,4 @@
-from futu import CurKlineHandlerBase, OrderBookHandlerBase, StockQuoteHandlerBase, RET_OK
+from futu import CurKlineHandlerBase, OrderBookHandlerBase, StockQuoteHandlerBase, TradeOrderHandlerBase, RET_OK
 class CurKline(CurKlineHandlerBase):
     def __init__(self, queue):
         self.queue = queue
@@ -15,7 +15,6 @@ class CurKline(CurKlineHandlerBase):
             volume = int(data["volume"][0])
             k_type = data["k_type"][0]
             self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume, k_type)))
-            # self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume)))
 
 
 class CurBidAsk(OrderBookHandlerBase):
@@ -26,7 +25,7 @@ class CurBidAsk(OrderBookHandlerBase):
         ret_code, data = super().on_recv_rsp(rsp_str)
         if ret_code == RET_OK:
             code      = data['code']
-            data_time = data['svr_recv_time_bid']
+            data_time = data['svr_recv_time_bid'] if data['svr_recv_time_bid'] != '' else data['svr_recv_time_ask']
             bid_price = int(data['Bid'][0][0])
             ask_price = int(data['Ask'][0][0])
             self.queue.put(('bid_ask', (code, data_time, bid_price, ask_price)))
