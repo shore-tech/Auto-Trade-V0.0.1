@@ -2,8 +2,9 @@ import sys
 from termcolor import cprint
 from queue import Queue
 import psycopg2
-from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, KLType, TrdSide
+from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, TrdSide
 from core.futu_live_data import CurKline, CurBidAsk, CurLast
+from core.futu_static import get_trd_code, get_realtime_kline
 from core.futu_trade import TradeOrder, place_order
 from core.env_variables import PSQL_CREDENTIALS
 from core.trading_acc import FutureTradingAccount
@@ -12,24 +13,34 @@ from core.key_definition import TrdAction, TrdLogic
 
 class GoldenCrossEnhanceStop:
     def __init__(self, initial_capital, underlying, bar_size, para_dict, trd_env=TrdEnv.SIMULATE, acc_id=11377717):
+        # database tables
+        self.table_k_line       = "golden_cross_es.kline"
+        self.table_order        = "golden_cross_es.order_record"
+        self.table_acc_status   = "golden_cross_es.acc_status"
+        # TODO: check acc_status table -> is_close_only = True -> no trading
+        acc_status = self.read_last_record(self.table_acc_status, 1)
+        if len(acc_status) == 0:
+            self.is_close_only = False
+        else:
+            pass
+
+        self.underlying     = get_trd_code(underlying)
+
         self.trd_env        = trd_env
         self.acc_id         = acc_id
         self.trade_account  = FutureTradingAccount(initial_capital)
-        self.underlying     = underlying
         self.bar_size       = bar_size
         self.para_dict      = para_dict
         self.long_window    = para_dict["long_window"]
         self.short_window   = para_dict["short_window"]
         self.data_q         = Queue()
-        self.table_k_line   = "golden_cross_es.kline_1"
-        self.table_order    = "golden_cross_es.order_record"
         self.cur_signal     = 0
 
 
     def read_last_record(self, table, record_size=1) -> list:
         conn   = psycopg2.connect(**PSQL_CREDENTIALS)
         cur    = conn.cursor()
-        query  = f"SELECT * FROM {table} ORDER BY time_key DESC LIMIT {record_size}"
+        query  = f"SELECT * FROM {table} ORDER BY updated_time DESC LIMIT {record_size}"
         cur.execute(query)
         last_record = cur.fetchall()
         last_record = last_record[::-1]
@@ -37,15 +48,15 @@ class GoldenCrossEnhanceStop:
         conn.close()
         last_record = [list(record) for record in last_record]
         return last_record
-        
+
 
     def insert_data(self, table, data, mode:int=0) -> bool:
         conn   = psycopg2.connect(**PSQL_CREDENTIALS)
         cur    = conn.cursor()
 
         match table:
-            case self.table_k_line:
-                columns = ["time_key", "code", "open", "high", "low", "close", "volume", "k_type", "sma_short", "sma_long", "signal"]
+            case (self.table_k_line | 'golden_cross_es.dummy'):
+                columns = ["updated_time", "code", "open", "high", "low", "close", "volume", "k_type", "sma_short", "sma_long", "signal"]
 
             case self.table_order:
                 match mode:
@@ -148,7 +159,8 @@ class GoldenCrossEnhanceStop:
         self.trade_ctx.set_handler(TradeOrder(self.data_q))
 
 
-        self.last_k_record = self.read_last_record(self.table_k_line, self.long_window) # read last record is necessary in case of system crash and reboot is needed
+        # self.last_k_record = self.read_last_record(self.table_k_line, self.long_window) # read last record is necessary in case of system crash and reboot is needed
+        self.last_k_record = get_realtime_kline(self.underlying, self.bar_size, self.long_window)
         last_k_dummy = None
 
         while True:

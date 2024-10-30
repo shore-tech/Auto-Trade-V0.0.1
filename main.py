@@ -3,7 +3,7 @@ from core.golden_cross_es import GoldenCrossEnhanceStop
 from futu import KLType
 
 if __name__ == '__main__':
-    code        = "HK.HSIcurrent"
+    code        = "HK.HSImain"
     bar_size    = KLType.K_1M 
     su = GoldenCrossEnhanceStop(
         initial_capital =1000000,
