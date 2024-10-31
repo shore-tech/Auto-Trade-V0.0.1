@@ -1,3 +1,4 @@
+import copy
 import sys
 from termcolor import cprint
 from queue import Queue
@@ -33,9 +34,11 @@ class GoldenCrossEnhanceStop:
         self.para_dict      = para_dict
         self.long_window    = para_dict["long_window"]
         self.short_window   = para_dict["short_window"]
+        self.stop_dist      = para_dict["stop_loss"]
+        self.ladder         = para_dict["ladder"]
         self.data_q         = Queue()
         self.cur_signal_open     = 0
-        self.cur_signal_close    = 0
+        self.cur_signal_close    = None
 
 
     def read_last_record(self, table, record_size=1) -> list:
@@ -115,64 +118,81 @@ class GoldenCrossEnhanceStop:
 
         self.last_k_record[-1] = self.last_k_record[-1] + [sma_short, sma_long, signal]
         self.insert_data(self.table_k_line, self.last_k_record[-1])
+        cprint('recorded k-line data ...', 'yellow')
         return signal
 
 
-    def generate_signal_close(self, last_k_dummy) -> int:
-        # check if position in su_trd_acc
-        # if yes, action_signal = su_trd_acc.mark_to_market() -> [margin_call, change_stop_level]
-        #                           -> action_signal == margin_call -> return signal_close[1,-1]
-        #                           -> action_signal == change_stop_level -> db_acc_mtm() -> return 0
-        return 0
-
-
     def action_on_signal_open(self, price_bid, price_ask) -> bool:
-        # if signal is generated, check the current portfolio 
-        # a) if there is sufficient fund for extra contract
-        # b) if position is open 
-        # c) if position is on the same direction
-        # d) check if there are pending orders -> yes, check order direction
+        # if sufficient fund and same direction, 
+        #   a) place order to broker
+        #   b) add the order to pending_orders in su_trd_acc
+        # remove the signal_open to avoid unexpected order submission
         t_size      = self.cur_signal_open
         t_price     = price_bid if t_size < 0 else price_ask
         trd_side    = TrdSide.SELL if t_size < 0 else TrdSide.BUY
-        trd_login   = TrdLogic.SIGNAL_SELL if t_size < 0 else TrdLogic.SIGNAL_BUY
-        is_sufficient_fund = self.trade_account.bal_available > abs(t_size) * t_price * self.trade_account.contract_multiplier * self.trade_account.margin_rate
-        if is_sufficient_fund:
-            if (self.trade_account.position_size == 0) or (self.trade_account.position_size * t_size > 0):
-                # no position / same direction -> add more contracts
-                order_rsp = place_order(
-                    self.trade_ctx, self.trd_code, 
-                    trd_side, abs(t_size), t_price, 
-                    self.acc_id, self.trd_env
-                )
-                if order_rsp != 'error':
-                    #  update trading account
-                    self.trade_account.pending_orders[order_rsp['order_id']] = {'order_status': order_rsp['order_status'], 'action': TrdAction.OPEN, 'logic': trd_login}
-            else:
-                #different direction -> pass, leave it to mtm() to handle
-                pass
+        trd_logic   = TrdLogic.SIGNAL_SELL if t_size < 0 else TrdLogic.SIGNAL_BUY
+        is_sufficient_fund  = self.trade_account.bal_available > abs(t_size) * t_price * self.trade_account.contract_multiplier * self.trade_account.margin_rate
+        is_same_direction   = (self.trade_account.position_size == 0) or (self.trade_account.position_size * t_size > 0)
+        if is_sufficient_fund and is_same_direction:
+            order_rsp = place_order(
+                self.trade_ctx, self.trd_code, 
+                trd_side, abs(t_size), t_price, 
+                self.acc_id, self.trd_env
+            )
+            if order_rsp != 'error':
+                self.trade_account.pending_orders[order_rsp['order_id']] = {'order_status': order_rsp['order_status'], 'action': TrdAction.OPEN, 'logic': trd_logic}
+
         self.cur_signal_open = 0
 
 
+    def update_stop_level(self, update_time, mkt_price:float, pos_direction) -> None:
+        prev_stop_level = copy.deepcopy(self.trade_account.stop_level)
+        if prev_stop_level is None:
+            self.trade_account.stop_level = mkt_price - pos_direction * self.stop_dist
+        elif (pos_direction > 0) and (mkt_price > prev_stop_level + self.stop_dist + self.ladder):
+            self.trade_account.stop_level += self.ladder
+        elif (pos_direction < 0) and (mkt_price < prev_stop_level - self.stop_dist - self.ladder):
+            self.trade_account.stop_level -= self.ladder
+        
+        if self.trade_account.stop_level != prev_stop_level:
+            self.record_acc_mtm(update_time, mkt_price, MtmReason.STOP_LOSS_UPDATE)
+        return
 
-    
-    def db_acc_mtm(self, update_time, mkt_price:float, reason:str, k_type=None, order_id=None) -> None:
-        # simple record the latest account status
-        match reason:
-            case (MtmReason.K_LINE):
-                if self.trade_account.position_size != 0:
-                    # NOTE: mark_to_market() needs updated since it will trigger open/close position in simulate trade
-                    # mark_to_market() should only responsible for raising action signal instead of execute directly
-                    self.trade_account.mark_to_market(mkt_price)
-                pass
-            case MtmReason.BID_ASK:
-                if self.trade_account.position_size != 0:
-                    self.trade_account.mark_to_market(mkt_price)
-                pass
-            case MtmReason.STOP_LOSS_UPDATE:
-                pass
-            case MtmReason.STOP_PROFIT_UPDATE:
-                pass
+
+    def generate_signal_close(self, mkt_price) -> dict|None:
+        pos_size        = self.trade_account.position_size
+        pos_direction   = pos_size / abs(pos_size)
+        stop_level      = self.trade_account.stop_level
+        if (pos_direction > 0 and mkt_price < stop_level) or (pos_direction < 0 and mkt_price > stop_level):
+            return {'t_size': -pos_size, 'action': TrdAction.CLOSE, 'logic': TrdLogic.STOP_LOSS}
+        
+        return self.trade_account.mark_to_market(mkt_price)
+
+
+    def action_on_signal_close(self, price_bid, price_ask) -> None:
+        # action when self.cur_signal_close != None
+        # send order to futu
+        t_size      = self.cur_signal_close['t_size']
+        t_price     = price_bid if t_size < 0 else price_ask
+        trd_side    = TrdSide.SELL if t_size < 0 else TrdSide.BUY
+        trd_action  = self.cur_signal_close['action']
+        trd_logic   = self.cur_signal_close['logic']
+        order_rsp = place_order(
+            self.trade_ctx, self.trd_code, 
+            trd_side, abs(t_size), t_price, 
+            self.acc_id, self.trd_env
+        )
+        if order_rsp != 'error':
+            self.trade_account.pending_orders[order_rsp['order_id']] = {'order_status': order_rsp['order_status'], 'action': trd_action, 'logic': trd_logic}
+
+        # remove signal_close to avoid multiple order submission
+        self.cur_signal_close = None
+        pass
+
+
+    def record_acc_mtm(self, update_time, mkt_price:float, reason:str, k_type=None, order_id=None) -> None:
+        # simply record the latest account status
+        cprint(f'recording acc status with reason: {reason}', 'yellow')
         values = [
             update_time,
             reason,
@@ -198,8 +218,8 @@ class GoldenCrossEnhanceStop:
     def run(self):
         quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
         quote_ctx.set_handler(CurKline(self.data_q))
-        quote_ctx.set_handler(CurBidAsk(self.data_q))
         quote_ctx.set_handler(CurLast(self.data_q))
+        quote_ctx.set_handler(CurBidAsk(self.data_q))
         quote_ctx.subscribe([self.trd_code], [self.bar_size, SubType.ORDER_BOOK, SubType.QUOTE])
 
         self.trade_ctx = OpenFutureTradeContext(host='127.0.0.1', port=11111)
@@ -221,19 +241,27 @@ class GoldenCrossEnhanceStop:
                         if data[0] != last_k_dummy[0]:
                             # when there is a new k-line data, generate signal and record the current position status
                             self.cur_signal_open = self.generate_signal_open(last_k_dummy)
-
-                        # TODO: generate_signal_close()
+                            self.trade_account.mark_to_market(data[5])
+                            self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE)
                     last_k_dummy = data
-                    # cprint(f"Data type: {data_type}, Data: {data}", "blue")
+
+                case "last":
+                    # last price data is only for determining if existing position should be closed
+                    if self.trade_account.position_size != 0:
+                        pos_direction = self.trade_account.position_size / abs(self.trade_account.position_size)
+                        self.update_stop_level(data[1] ,data[2], pos_direction)
+                        self.cur_signal_close = self.generate_signal_close(data[-1])
+                    pass
 
                 case "bid_ask":
-                    # bid_ask data is used to: a)determine the price for order and, b) mark-to-market current position
+                    # bid_ask data is only for determining the price for order
                     if self.cur_signal_open != 0:
-                        cprint(f"Signal: {self.cur_signal_open}, Data: {data}", "yellow")
+                        cprint(f"Signal_open: {self.cur_signal_open}, Data: {data}", "yellow")
                         self.action_on_signal_open(data[-2], data[-1])
-                    else:
-                        # TODO: generate_signal_close()
-                        pass
+
+                    if self.cur_signal_close is not None:
+                        cprint(f"Signal_close: {self.cur_signal_close}, Data: {data}", "yellow")
+                        self.action_on_signal_close(data[-2], data[-1])
 
                 case "order":
                     # handle with record_transaction(), mark_to_market()
@@ -250,26 +278,26 @@ class GoldenCrossEnhanceStop:
                         # TODO: record transaction
                         case 'FILLED_ALL':
                             # TODO: record the su_trd_acc status
-                            # TODO: remove the order from pending_orders
                             t_side = -1 if data['trd_side'] == TrdSide.SELL else 1
                             t_size = t_side * data['dealt_qty']
                             t_price = data['dealt_avg_price']
                             if action == TrdAction.OPEN:
-                                stop_level = t_price - t_side * self.para_dict['stop_loss']
-                                commission, pnl_realized = self.trade_account.open_position(t_size, t_price, stop_level)
-                                # TODO: record the su_trd_acc status
-
+                                commission, pnl_realized = self.trade_account.open_position(t_size, t_price)
+                                self.update_stop_level(data['updated_time'], t_price, t_side)
                             else:
                                 commission, pnl_realized = self.trade_account.close_position(t_size, t_price)
-                                # TODO: record the su_trd_acc status
-                            
+                            # record acc status
+                            self.record_acc_mtm(data['updated_time'], t_price, action, None, data['order_id'])
 
                             values = list(data.values()) + [action, logic, commission, pnl_realized]
+                            # remove the order from pending_orders
                             del self.trade_account.pending_orders[data['order_id']]
+
                         case _:
                             values = list(data.values()) + [action, logic, 0, 0]
-
+                    # record the order record
                     self.insert_data(self.table_order, values)
+                    cprint('recorded order record ...', 'yellow')
 
                     cprint(f"Data type: {data_type}, Data: {data}", "yellow")
 

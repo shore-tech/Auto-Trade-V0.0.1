@@ -10,10 +10,10 @@ if __name__ == '__main__':
         underlying      =code,
         bar_size        =bar_size,
         para_dict       ={
-            "short_window": 2,
-            "long_window": 3,
-            "stop_loss": 0.03,
-            "stop_profit": 0.03,
+            "short_window"  : 2,
+            "long_window"   : 3,
+            "stop_loss"     : 30,
+            "ladder"        : 20,
         }
     )
     su.run()

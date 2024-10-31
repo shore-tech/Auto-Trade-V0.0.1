@@ -1,6 +1,7 @@
 class TrdAction:
     OPEN = 'open'
     CLOSE = 'close'
+    FORCED_CLOSE = 'forced_close'
 
 
 class TrdLogic:

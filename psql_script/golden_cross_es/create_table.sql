@@ -76,7 +76,7 @@
 --     pnl_unrealized  DOUBLE PRECISION,
 --     k_type          VARCHAR(10),
 --     order_id        VARCHAR(10),
---     PRIMARY KEY (updated_time)
+--     PRIMARY KEY (updated_time, reason)
 -- );
 
 -- select * from golden_cross_es.acc_status;

@@ -1,9 +1,11 @@
 import copy
 import sys
 from termcolor import cprint
+from core.key_definition import TrdAction, TrdLogic
 
 
 class FutureTradingAccount():
+    # TODO: rewrite the __init__ function to take in initial status from database
     def __init__(self, initail_cash_bal: float, margin_rate:float = 0.1, commission_rate:float = 11, contract_multiplier:int = 50):
         self.bal_initial            = initail_cash_bal
         self.bal_cash               = initail_cash_bal          # cash balance
@@ -24,34 +26,31 @@ class FutureTradingAccount():
 
         self.pending_orders         = {}                        # dictionary of pending orders
 
-    def mark_to_market(self, mk_price):
-        if self.position_size != 0:
-            self.pnl_unrealized = (mk_price - self.position_price) * self.position_size * self.contract_multiplier
-        else:
+    def mark_to_market(self, mk_price) -> dict|None:
+        if self.position_size == 0:
             self.pnl_unrealized = 0
+            self.margin_initial = 0
+            self.cap_usage      = 0
             self.position_price = 0
-            self.stop_level = None
-            self.target_level = None
-
-        self.margin_initial = abs(self.position_size) * mk_price * self.contract_multiplier * self.margin_rate
-        self.bal_available  = self.bal_cash - self.margin_initial + self.pnl_unrealized
-        self.bal_equity     = self.bal_cash + self.pnl_unrealized
-        self.cap_usage      = round(self.margin_initial / (self.bal_cash + 0.0001), 4)
-        
-        if self.bal_equity < self.margin_initial * self.margin_maintanence_rate:
-            cprint(f"Warning! Margin call: ${self.margin_initial - self.bal_equity}, Margin-level: {(self.bal_equity / self.margin_initial * 100):.2f}%, ", "red")
-            return {'signal': 'margin call', 'action': None}
-        if self.bal_equity < self.margin_initial * self.margin_force_close_rate:
-            cprint(f"Warning! Force Closure!!! \nMargin-level: {(self.bal_equity / self.margin_initial * 100):.2f}%, ", "red")
-            t_size = copy.deepcopy(-self.position_size)
-            t_price = mk_price
-            commission, pnl_realized = self.close_position(t_size, t_price)
-            return {'signal': 'margin call', 'action': 'force close', 'logic':'margin call' , 't_size': t_size, 't_price': t_price,'commission': commission, 'pnl_realized': pnl_realized}
-
-        return {'signal': '', 'action': None}
+            self.stop_level     = None
+            self.target_level   = None
+        else:
+            self.pnl_unrealized = (mk_price - self.position_price) * self.position_size * self.contract_multiplier
+            self.margin_initial = abs(self.position_size) * mk_price * self.contract_multiplier * self.margin_rate
+            self.bal_available  = self.bal_cash - self.margin_initial + self.pnl_unrealized
+            self.bal_equity     = self.bal_cash + self.pnl_unrealized
+            self.cap_usage      = round(self.margin_initial / (self.bal_cash + 0.0001), 4)
+            if self.bal_equity < self.margin_initial * self.margin_maintanence_rate:
+                cprint(f"Warning! Margin call: ${self.margin_initial - self.bal_equity}, Margin-level: {(self.bal_equity / self.margin_initial * 100):.2f}%, ", "red")
+                return {'t_size': 0, 'action': None, 'logic': TrdLogic.MARGIN_CALL}
+            if self.bal_equity < self.margin_initial * self.margin_force_close_rate:
+                cprint(f"Warning! Force Closure!!! \nMargin-level: {(self.bal_equity / self.margin_initial * 100):.2f}%, ", "red")
+                return {'t_size': -self.position_size, 'action': TrdAction.FORCED_CLOSE, 'logic': TrdLogic.MARGIN_CALL}
+            
+        return None
 
 
-    def open_position(self, t_size:int, t_price:float, stop_level:float = None, target_level:float = None):
+    def open_position(self, t_size:int, t_price:float):
         # new position size shall have the same sign as the current position size
         if t_size == 0 or self.position_size/t_size < 0:
             cprint("Error: New position size is 0 or direction is wrong", "red")
@@ -61,8 +60,6 @@ class FutureTradingAccount():
         self.position_size  += t_size
         commission           = abs(t_size) * self.commission_rate
         self.bal_cash       -= commission
-        self.stop_level      = stop_level
-        self.target_level    = target_level
         self.mark_to_market(t_price)
         return commission, -commission
 

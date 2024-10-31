@@ -1,4 +1,5 @@
-from futu import CurKlineHandlerBase, OrderBookHandlerBase, StockQuoteHandlerBase, TradeOrderHandlerBase, RET_OK
+from futu import CurKlineHandlerBase, OrderBookHandlerBase, StockQuoteHandlerBase, RET_OK
+# TODO: change data return into dictionary format rather than tuple
 class CurKline(CurKlineHandlerBase):
     def __init__(self, queue):
         self.queue = queue
