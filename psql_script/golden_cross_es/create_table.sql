@@ -1,25 +1,7 @@
 \c demo_db
 
-DROP TABLE IF EXISTS golden_cross_es.dummy;
-CREATE TABLE golden_cross_es.dummy(
-    updated_time    VARCHAR(30) NOT NULL,
-    code            VARCHAR(20) NOT NULL,
-    open            INT NOT NULL,
-    high            INT NOT NULL,
-    low             INT NOT NULL,
-    close           INT NOT NULL,
-    volume          BIGINT NOT NULL,
-    k_type          VARCHAR(20) NOT NULL,
-    sma_short       DOUBLE PRECISION,
-    sma_long        DOUBLE PRECISION,
-    signal          INT,
-    PRIMARY KEY (updated_time, code)
-);
-select * from golden_cross_es.dummy;
-
-
--- DROP TABLE IF EXISTS golden_cross_es.kline;
--- CREATE TABLE golden_cross_es.kline(
+-- DROP TABLE IF EXISTS golden_cross_es.dummy;
+-- CREATE TABLE golden_cross_es.dummy(
 --     updated_time    VARCHAR(30) NOT NULL,
 --     code            VARCHAR(20) NOT NULL,
 --     open            INT NOT NULL,
@@ -33,7 +15,25 @@ select * from golden_cross_es.dummy;
 --     signal          INT,
 --     PRIMARY KEY (updated_time, code)
 -- );
--- select * from golden_cross_es.kline;
+-- select * from golden_cross_es.dummy;
+
+
+-- DROP TABLE IF EXISTS golden_cross_es.k_line;
+-- CREATE TABLE golden_cross_es.k_line(
+--     updated_time    VARCHAR(30) NOT NULL,
+--     code            VARCHAR(20) NOT NULL,
+--     open            INT NOT NULL,
+--     high            INT NOT NULL,
+--     low             INT NOT NULL,
+--     close           INT NOT NULL,
+--     volume          BIGINT NOT NULL,
+--     k_type          VARCHAR(20) NOT NULL,
+--     sma_short       DOUBLE PRECISION,
+--     sma_long        DOUBLE PRECISION,
+--     signal          INT,
+--     PRIMARY KEY (updated_time, code)
+-- );
+-- select * from golden_cross_es.k_line;
 
 
 -- DROP TABLE IF EXISTS golden_cross_es.order_record;
@@ -60,6 +60,7 @@ select * from golden_cross_es.dummy;
 -- DROP TABLE IF EXISTS golden_cross_es.acc_status;
 -- CREATE TABLE golden_cross_es.acc_status (
 --     updated_time    VARCHAR(30) NOT NULL,
+--     reason          VARCHAR(20) NOT NULL,
 --     nav             DOUBLE PRECISION NOT NULL,
 --     bal_cash        DOUBLE PRECISION NOT NULL,
 --     bal_available   DOUBLE PRECISION NOT NULL,

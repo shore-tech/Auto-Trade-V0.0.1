@@ -7,8 +7,8 @@ class FutureTradingAccount():
     def __init__(self, initail_cash_bal: float, margin_rate:float = 0.1, commission_rate:float = 11, contract_multiplier:int = 50):
         self.bal_initial            = initail_cash_bal
         self.bal_cash               = initail_cash_bal          # cash balance
-        self.bal_avialable          = initail_cash_bal          # cash available for trading = cash balance - initial margin + unrealized profit and loss
-        self.bal_equity             = initail_cash_bal          # total equity(NAV) = cash balance + unrealized profit and loss
+        self.bal_available          = initail_cash_bal          # cash available for trading = cash balance - initial margin + unrealized profit and loss
+        self.nav                    = initail_cash_bal          # total equity(NAV) = cash balance + unrealized profit and loss
         self.pnl_unrealized         = 0                         # unrealized profit and loss
         self.margin_rate            = margin_rate               # margin rate for opening a position
         self.margin_initial         = 0                         # initial margin in $ term
@@ -19,7 +19,8 @@ class FutureTradingAccount():
         self.commission_rate        = commission_rate
         self.position_size          = 0                         # position size -> number of contracts. note: -ve denotes short position
         self.position_price         = 0                         # position price -> the averave price of the current position
-        self.stop_level             = 0                         # stop level for the current position
+        self.stop_level             = None                      # stop level for the current position
+        self.target_level           = None                      # target level for the current position
 
         self.pending_orders         = {}                        # dictionary of pending orders
 
@@ -29,9 +30,11 @@ class FutureTradingAccount():
         else:
             self.pnl_unrealized = 0
             self.position_price = 0
+            self.stop_level = None
+            self.target_level = None
 
         self.margin_initial = abs(self.position_size) * mk_price * self.contract_multiplier * self.margin_rate
-        self.bal_avialable  = self.bal_cash - self.margin_initial + self.pnl_unrealized
+        self.bal_available  = self.bal_cash - self.margin_initial + self.pnl_unrealized
         self.bal_equity     = self.bal_cash + self.pnl_unrealized
         self.cap_usage      = round(self.margin_initial / (self.bal_cash + 0.0001), 4)
         
@@ -48,7 +51,7 @@ class FutureTradingAccount():
         return {'signal': '', 'action': None}
 
 
-    def open_position(self, t_size:int, t_price:float):
+    def open_position(self, t_size:int, t_price:float, stop_level:float = None, target_level:float = None):
         # new position size shall have the same sign as the current position size
         if t_size == 0 or self.position_size/t_size < 0:
             cprint("Error: New position size is 0 or direction is wrong", "red")
@@ -58,6 +61,8 @@ class FutureTradingAccount():
         self.position_size  += t_size
         commission           = abs(t_size) * self.commission_rate
         self.bal_cash       -= commission
+        self.stop_level      = stop_level
+        self.target_level    = target_level
         self.mark_to_market(t_price)
         return commission, -commission
 
