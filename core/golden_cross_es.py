@@ -4,10 +4,13 @@ from termcolor import cprint
 from queue import Queue
 import psycopg2
 from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, TrdSide
+import requests
+from datetime import datetime, timedelta
+
 from core.futu_live_data import CurKline, CurBidAsk, CurLast
 from core.futu_static import get_trd_code, get_realtime_kline
-from core.futu_trade import TradeOrder, place_order
-from core.env_variables import PSQL_CREDENTIALS
+from core.futu_trade import TradeOrder, place_order, order_query, cancel_order, cancel_all_order
+from core.env_variables import PSQL_CREDENTIALS, TG_TOKEN, TARGET_AUDIENT_id, TIME_ZONES, WARN_L1, WARN_L2
 from core.trading_acc import FutureTradingAccount
 from core.key_definition import TrdAction, TrdLogic, MtmReason, DBTableColumns
 
@@ -40,6 +43,8 @@ class GoldenCrossEnhanceStop:
         self.cur_signal_open     = 0
         self.closing_position    = False
         self.cur_signal_close    = None
+
+        self.trade_ctx      = OpenFutureTradeContext(host='127.0.0.1', port=11111)
 
 
     def read_last_record(self, table, record_size=1) -> list:
@@ -222,14 +227,45 @@ class GoldenCrossEnhanceStop:
         self.insert_data(self.table_acc_status, values)
 
 
+    def eod_routine(self):
+        # remove all pending orders 5 minutes before market close
+        # chekc if position in broker acc is align with self-recorded status(su_trd_acc)
+        # any descrepancy -> send notification via telegram
+        outstanding_order = order_query(self.trade_ctx)
+        if len(outstanding_order) > 0:
+            # cancel all outstanding orders
+            for _, order in outstanding_order.iterrows():
+                if cancel_order(self.trade_ctx, order['order_id']):
+                    msg = f'Order {order["order_id"]}, {order["trd_side"]} {order["code"]} @ {order["price"]} X {order["qty"]}, is cancelled'
+                    cprint(msg, 'yellow')
+                    self.tg_notify(msg)
+            self.trade_account.pending_orders = {}
+        else:
+            print('No outstanding order')
+
+        pass
+
+
+    def tg_notify(self, msg) -> None:
+        cprint(f'Sending notification: {msg}', 'yellow')
+        result = requests.get(f'https://api.telegram.org/bot{TG_TOKEN}/sendMessage?chat_id={TARGET_AUDIENT_id}&text={msg}')
+        print(result.json())
+
+
     def run(self):
+        start_time = datetime.now(TIME_ZONES['hk_tz'])
+        if start_time.hour < 3:
+            end_time = start_time.replace(hour=2, minute=55, second=0)
+        else:
+            end_time = start_time.replace(hour=2, minute=55, second=0)+timedelta(days=1)
+
         quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
         quote_ctx.set_handler(CurKline(self.data_q))
         quote_ctx.set_handler(CurLast(self.data_q))
         quote_ctx.set_handler(CurBidAsk(self.data_q))
         quote_ctx.subscribe([self.trd_code], [self.bar_size, SubType.ORDER_BOOK, SubType.QUOTE])
 
-        self.trade_ctx = OpenFutureTradeContext(host='127.0.0.1', port=11111)
+        
         # trade_ctx.unlock_trade('123456')
         self.trade_ctx.set_handler(TradeOrder(self.data_q))
 
@@ -303,5 +339,9 @@ class GoldenCrossEnhanceStop:
                     cprint('recorded order record ...', 'yellow')
 
                     cprint(f"Data type: {data_type}, Data: {data}", "yellow")
+
+            if datetime.now(TIME_ZONES['hk_tz']) > end_time:
+                self.eod_routine()
+                break
 
 
