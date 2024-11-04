@@ -38,6 +38,7 @@ class GoldenCrossEnhanceStop:
         self.ladder         = para_dict["ladder"]
         self.data_q         = Queue()
         self.cur_signal_open     = 0
+        self.closing_position    = False
         self.cur_signal_close    = None
 
 
@@ -87,6 +88,7 @@ class GoldenCrossEnhanceStop:
             return False
 
 
+    # functions for opening position
     def generate_signal_open(self, last_k_dummy) -> int:
         # calculate the short and long moving averages
         # determine the signals
@@ -143,8 +145,10 @@ class GoldenCrossEnhanceStop:
                 self.trade_account.pending_orders[order_rsp['order_id']] = {'order_status': order_rsp['order_status'], 'action': TrdAction.OPEN, 'logic': trd_logic}
 
         self.cur_signal_open = 0
+        cprint(f'action_on_signal_open() consumed self.cur_signal_open, self.cur_signal_open = {self.cur_signal_open}', 'yellow', 'on_magenta')
 
 
+    # functions when there is an existing position, specifically for enhanced stop loss
     def update_stop_level(self, update_time, mkt_price:float, pos_direction) -> None:
         prev_stop_level = copy.deepcopy(self.trade_account.stop_level)
         if prev_stop_level is None:
@@ -159,6 +163,7 @@ class GoldenCrossEnhanceStop:
         return
 
 
+    # functions for closing position
     def generate_signal_close(self, mkt_price) -> dict|None:
         pos_size        = self.trade_account.position_size
         pos_direction   = pos_size / abs(pos_size)
@@ -183,15 +188,17 @@ class GoldenCrossEnhanceStop:
             self.acc_id, self.trd_env
         )
         if order_rsp != 'error':
+            self.closing_position = True
             self.trade_account.pending_orders[order_rsp['order_id']] = {'order_status': order_rsp['order_status'], 'action': trd_action, 'logic': trd_logic}
 
         # remove signal_close to avoid multiple order submission
         self.cur_signal_close = None
+        cprint(f'action_on_signal_close() consumed self.cur_signal_close, self.cur_signal_close = {self.cur_signal_close}', 'yellow', 'on_magenta')
         pass
 
 
+    # function to record the account status
     def record_acc_mtm(self, update_time, mkt_price:float, reason:str, k_type=None, order_id=None) -> None:
-        # simply record the latest account status
         cprint(f'recording acc status with reason: {reason}', 'yellow')
         values = [
             update_time,
@@ -231,10 +238,7 @@ class GoldenCrossEnhanceStop:
         last_k_dummy = None
 
         while True:
-            # receive data from futu api subscription
             data_type, data = self.data_q.get()
-
-            # process depends on incoming data type
             match data_type:
                 case "k_line":      # check if signal generated
                     if last_k_dummy is not None:
@@ -245,16 +249,15 @@ class GoldenCrossEnhanceStop:
                             self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE)
                     last_k_dummy = data
 
-                case "last":
-                    # last price data is only for determining if existing position should be closed
+                case "last":        # last price data is only for determining if existing position should be closed
                     if self.trade_account.position_size != 0:
                         pos_direction = self.trade_account.position_size / abs(self.trade_account.position_size)
                         self.update_stop_level(data[1] ,data[2], pos_direction)
-                        self.cur_signal_close = self.generate_signal_close(data[-1])
+                        if not self.closing_position:
+                            self.cur_signal_close = self.generate_signal_close(data[-1])
                     pass
 
-                case "bid_ask":
-                    # bid_ask data is only for determining the price for order
+                case "bid_ask":     # bid_ask data is only for determining the price for order
                     if self.cur_signal_open != 0:
                         cprint(f"Signal_open: {self.cur_signal_open}, Data: {data}", "yellow")
                         self.action_on_signal_open(data[-2], data[-1])
@@ -263,8 +266,7 @@ class GoldenCrossEnhanceStop:
                         cprint(f"Signal_close: {self.cur_signal_close}, Data: {data}", "yellow")
                         self.action_on_signal_close(data[-2], data[-1])
 
-                case "order":
-                    # handle with record_transaction(), mark_to_market()
+                case "order":       # order type data is for: 1)recording orders, and 2)update the account status
                     try:
                         self.trade_account.pending_orders[data['order_id']]['order_status'] = data['order_status']
                         action = self.trade_account.pending_orders[data['order_id']]['action']
@@ -286,6 +288,7 @@ class GoldenCrossEnhanceStop:
                                 self.update_stop_level(data['updated_time'], t_price, t_side)
                             else:
                                 commission, pnl_realized = self.trade_account.close_position(t_size, t_price)
+                                self.closing_position = False
                             # record acc status
                             self.record_acc_mtm(data['updated_time'], t_price, action, None, data['order_id'])
 
