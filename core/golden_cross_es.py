@@ -3,14 +3,13 @@ import sys
 import time
 from termcolor import cprint
 from queue import Queue
-import psycopg2
-from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, TrdSide, OrderStatus
+from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, TrdSide
 import requests
 from datetime import datetime, timedelta
 
 from core.futu_live_data import CurKline, CurBidAsk, CurLast
 from core.futu_static import get_trd_code, get_realtime_kline
-from core.futu_trade import TradeOrder, place_order, order_query, hist_order_query, cancel_order
+from core.futu_trade import TradeOrder, place_order, order_query, hist_order_query, cancel_order, position_query
 from core.db_crud import read_last_record, insert_data, search_record
 from core.env_variables import TG_TOKEN, TARGET_AUDIENT_id
 from core.trading_acc import FutureTradingAccount
@@ -235,8 +234,36 @@ class GoldenCrossEnhanceStop:
 
 
     def position_reconciliation(self) -> None:
-        pass
+        # position discrepancy <- wrong code(month-end roll over), wrong position size
+        broker_record   = position_query(self.trade_ctx)
+        db_record       = read_last_record(self.table_acc_status, 1)[0]
+        if broker_record is None:
+            cprint('Broker position query error', 'red')
+            msg = f'{TgEmoji.WARN_L2 * 5} \nposition_reconciliation(): Broker position query error\n Please proceed to your trading machine to reconcile the discrepancy \n{TgEmoji.WARN_L2 * 5}'
+            self.tg_notify(msg)
+            return
+        msg = f'{TgEmoji.WARN_L2 * 5} \nPosition discrepancy found: \n'
+        is_position_discrepancy = False
+        if len(broker_record) == 0:
+            if broker_record['qty'] != 0: 
+                is_position_discrepancy = True
+                msg += f'Broker Record: nth, self-record: {db_record['pos_sizes']} X {db_record['code']} @ {db_record['pos_price']}\n'
+        else:
+            if broker_record['code'] != db_record['code']:
+                is_position_discrepancy = True
+                msg += f'code -> broker: {broker_record['code']}, self-record: {db_record['code']}\n'
+            if broker_record['qty'] != db_record['pos_size']: 
+                is_position_discrepancy = True
+                msg += f'pos_size -> broker: {broker_record['qty']}, self-record: {db_record['pos_size']}\n'
 
+            if is_position_discrepancy:
+                msg += f'{TgEmoji.WARN_L2 * 5} \nPlease proceed to your trading machine to reconcile the discrepancy'
+        
+        if is_position_discrepancy:
+            self.tg_notify(msg)
+            # TODO: think of how to reconcile the position discrepancy
+        else:
+            cprint('No position discrepancy found', 'green')
 
 
     def eod_routine(self):
@@ -261,9 +288,10 @@ class GoldenCrossEnhanceStop:
         # trade reconciliation -> 
         self.order_reconciliation()
 
-        # TODO: position reconciliation
+        # position reconciliation
+        self.position_reconciliation()
 
-        pass
+
 
 
     def tg_notify(self, msg) -> None:

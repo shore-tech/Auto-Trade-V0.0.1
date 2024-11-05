@@ -91,12 +91,15 @@ def cancel_order(trade_ctx, order_id, acc_id=11377717, trd_env=TrdEnv.SIMULATE) 
         return False
 
 
-def accinfo_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE):
-    ret, data = trade_ctx.accinfo_query(
-        acc_id=acc_id,
-        trd_env=TrdEnv.SIMULATE
+def position_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE) -> dict:
+    ret, data = trade_ctx.position_list_query(
+        acc_id  = acc_id,
+        trd_env = trd_env,
     )
     if ret == RET_OK:
-        print(data)  # 取第一行的购买力
+        data = data[['code', 'qty', 'can_sell_qty', 'cost_price', 'cost_price_valid', 'market_val', 'nominal_price']]
+        data = data.iloc[0].to_dict()
+        return data
     else:
-        print('accinfo_query error: ', data)
+        print('position_list_query error: ', data)
+        return None
