@@ -245,10 +245,11 @@ class GoldenCrossEnhanceStop:
         msg = f'{TgEmoji.WARN_L2 * 5} \nPosition discrepancy found: \n'
         is_position_discrepancy = False
         if len(broker_record) == 0:
-            if broker_record['qty'] != 0: 
+            if db_record['pos_size'] != 0: 
                 is_position_discrepancy = True
-                msg += f'Broker Record: nth, self-record: {db_record['pos_sizes']} X {db_record['code']} @ {db_record['pos_price']}\n'
+                msg += f'Broker Record: empty, self-record: {db_record['pos_sizes']} X {db_record['code']} @ {db_record['pos_price']}\n'
         else:
+            db_record = db_record[0]        # only for trading one underlying
             if broker_record['code'] != db_record['code']:
                 is_position_discrepancy = True
                 msg += f'code -> broker: {broker_record['code']}, self-record: {db_record['code']}\n'

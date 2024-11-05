@@ -91,14 +91,15 @@ def cancel_order(trade_ctx, order_id, acc_id=11377717, trd_env=TrdEnv.SIMULATE) 
         return False
 
 
-def position_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE) -> dict:
+def position_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE) -> list:
     ret, data = trade_ctx.position_list_query(
         acc_id  = acc_id,
         trd_env = trd_env,
     )
     if ret == RET_OK:
         data = data[['code', 'qty', 'can_sell_qty', 'cost_price', 'cost_price_valid', 'market_val', 'nominal_price']]
-        data = data.iloc[0].to_dict()
+        # data = data.iloc[0].to_dict()
+        data = data.to_dict(orient='records')
         return data
     else:
         print('position_list_query error: ', data)
