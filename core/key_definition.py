@@ -1,3 +1,6 @@
+import pytz
+
+
 class TrdAction:
     OPEN = 'open'
     CLOSE = 'close'
@@ -36,3 +39,14 @@ class DBTableColumns:
         'code', 'pos_size', 'pos_price', 'mkt_price', 'stop_level', 'target_level', 'pnl_unrealized', 
         'k_type', 'order_id'
     ]
+
+
+class TimeZones:
+    UTC     = "UTC"
+    hk_tz   = pytz.timezone('Asia/Hong_Kong')
+    syd_tz  = pytz.timezone('Australia/Sydney')
+
+
+class TgEmoji:
+    WARN_L1 = "⚠️"
+    WARN_L2 = "🆘"

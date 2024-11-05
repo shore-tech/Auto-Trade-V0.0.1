@@ -9,10 +9,11 @@ from datetime import datetime, timedelta
 
 from core.futu_live_data import CurKline, CurBidAsk, CurLast
 from core.futu_static import get_trd_code, get_realtime_kline
-from core.futu_trade import TradeOrder, place_order, order_query, cancel_order, cancel_all_order
-from core.env_variables import PSQL_CREDENTIALS, TG_TOKEN, TARGET_AUDIENT_id, TIME_ZONES, WARN_L1, WARN_L2
+from core.futu_trade import TradeOrder, place_order, order_query, cancel_order
+from core.db_crud import read_last_record, insert_data
+from core.env_variables import TG_TOKEN, TARGET_AUDIENT_id
 from core.trading_acc import FutureTradingAccount
-from core.key_definition import TrdAction, TrdLogic, MtmReason, DBTableColumns
+from core.key_definition import TrdAction, TrdLogic, MtmReason, TimeZones, TgEmoji
 
 
 class GoldenCrossEnhanceStop:
@@ -22,7 +23,7 @@ class GoldenCrossEnhanceStop:
         self.table_order        = "golden_cross_es.order_record"
         self.table_acc_status   = "golden_cross_es.acc_status"
         # TODO: check acc_status table -> is_close_only = True -> no trading
-        acc_status = self.read_last_record(self.table_acc_status, 1)
+        acc_status = read_last_record(self.table_acc_status, 1)
         if len(acc_status) == 0:
             self.is_close_only = False
         else:
@@ -47,50 +48,61 @@ class GoldenCrossEnhanceStop:
         self.trade_ctx      = OpenFutureTradeContext(host='127.0.0.1', port=11111)
 
 
-    def read_last_record(self, table, record_size=1) -> list:
-        conn   = psycopg2.connect(**PSQL_CREDENTIALS)
-        cur    = conn.cursor()
-        query  = f"SELECT * FROM {table} ORDER BY updated_time DESC LIMIT {record_size}"
-        cur.execute(query)
-        last_record = cur.fetchall()
-        last_record = last_record[::-1]
-        cur.close()
-        conn.close()
-        last_record = [list(record) for record in last_record]
-        return last_record
+    # def get_table_columns(self, table) -> list:
+    #     match table:
+    #         case self.table_k_line:
+    #             return DBTableColumns.k_line
 
+    #         case self.table_order:
+    #             return DBTableColumns.order_record
 
-    def insert_data(self, table, data) -> bool:
-        conn   = psycopg2.connect(**PSQL_CREDENTIALS)
-        cur    = conn.cursor()
+    #         case self.table_acc_status:
+    #             return DBTableColumns.acc_status
 
         match table:
             case (self.table_k_line | 'golden_cross_es.dummy'):
                 columns = DBTableColumns.k_line
 
-            case self.table_order:
-                columns = DBTableColumns.order_record
+    # def read_last_record(self, table, record_size=1) -> list:
+    #     conn   = psycopg2.connect(**PSQL_CREDENTIALS)
+    #     cur    = conn.cursor()
+    #     query  = f"SELECT * FROM {table} ORDER BY updated_time DESC LIMIT {record_size}"
+    #     cur.execute(query)
+    #     last_record = cur.fetchall()
+    #     last_record = last_record[::-1]
+    #     cur.close()
+    #     conn.close()
+    #     last_record = [list(record) for record in last_record]
+    #     last_record = [dict(zip(self.get_table_columns(table), record)) for record in last_record]
 
-            case self.table_acc_status:
-                columns = DBTableColumns.acc_status
+    #     return last_record
 
         column_str = ', '.join(columns)
         value_str = ', '.join(['%s' for _ in columns])
         query = f"INSERT INTO {table} ({column_str}) VALUES ({value_str})"
 
-        try:
-            cur.execute(query, data)
-            conn.commit()
-            cprint(f"inserting to: {table}", "blue")
-            cprint(f"inserting data: {data}", "blue")
-            cprint(f"execute result: {cur.statusmessage}", "blue")
-            cur.close()
-            conn.close()
-            return True
+    # def insert_data(self, table, data) -> bool:
+    #     conn   = psycopg2.connect(**PSQL_CREDENTIALS)
+    #     cur    = conn.cursor()
+
+    #     columns = self.get_table_columns(table)
+    #     column_str = ', '.join(columns)
+    #     value_str = ', '.join(['%s' for _ in columns])
+    #     query = f"INSERT INTO {table} ({column_str}) VALUES ({value_str})"
+
+    #     try:
+    #         cur.execute(query, data)
+    #         conn.commit()
+    #         cprint(f"inserting to: {table}", "blue")
+    #         cprint(f"inserting data: {data}", "blue")
+    #         cprint(f"execute result: {cur.statusmessage}", "blue")
+    #         cur.close()
+    #         conn.close()
+    #         return True
         
-        except Exception as e:
-            cprint(f"Error: {e}", "red")
-            return False
+    #     except Exception as e:
+    #         cprint(f"Error: {e}", "red")
+    #         return False
 
 
     # functions for opening position
@@ -124,7 +136,7 @@ class GoldenCrossEnhanceStop:
                     signal = 0
 
         self.last_k_record[-1] = self.last_k_record[-1] + [sma_short, sma_long, signal]
-        self.insert_data(self.table_k_line, self.last_k_record[-1])
+        insert_data(self.table_k_line, self.last_k_record[-1])
         cprint('recorded k-line data ...', 'yellow')
         return signal
 
@@ -224,13 +236,13 @@ class GoldenCrossEnhanceStop:
             k_type,
             order_id,
         ]
-        self.insert_data(self.table_acc_status, values)
+        insert_data(self.table_acc_status, values)
 
 
     def eod_routine(self):
         # remove all pending orders 5 minutes before market close
         # chekc if position in broker acc is align with self-recorded status(su_trd_acc)
-        # any descrepancy -> send notification via telegram
+        # any discrepancy -> send notification via telegram
         outstanding_order = order_query(self.trade_ctx)
         if len(outstanding_order) > 0:
             # cancel all outstanding orders
@@ -243,6 +255,10 @@ class GoldenCrossEnhanceStop:
         else:
             print('No outstanding order')
 
+        # TODO: trade reconciliation -> 
+
+        # TODO: position reconciliation
+
         pass
 
 
@@ -253,7 +269,7 @@ class GoldenCrossEnhanceStop:
 
 
     def run(self):
-        start_time = datetime.now(TIME_ZONES['hk_tz'])
+        start_time = datetime.now(TimeZones.hk_tz)
         if start_time.hour < 3:
             end_time = start_time.replace(hour=2, minute=55, second=0)
         else:
@@ -282,7 +298,7 @@ class GoldenCrossEnhanceStop:
                             # when there is a new k-line data, generate signal and record the current position status
                             self.cur_signal_open = self.generate_signal_open(last_k_dummy)
                             self.trade_account.mark_to_market(data[5])
-                            self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE)
+                            self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE, k_type=data[7])
                     last_k_dummy = data
 
                 case "last":        # last price data is only for determining if existing position should be closed
@@ -340,7 +356,8 @@ class GoldenCrossEnhanceStop:
 
                     cprint(f"Data type: {data_type}, Data: {data}", "yellow")
 
-            if datetime.now(TIME_ZONES['hk_tz']) > end_time:
+            if datetime.now(TimeZones.hk_tz) > end_time:
+                self.tg_notify('Market is closing, closing all outstanding orders')
                 self.eod_routine()
                 break
 
