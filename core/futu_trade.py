@@ -30,17 +30,16 @@ def place_order(trade_ctx, code, trd_side, qty, price, acc_id, trd_env=TrdEnv.SI
         return 'error'
 
 
-def order_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE) -> dict:
+def order_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE, status_filter_list=[OrderStatus.SUBMITTING, OrderStatus.SUBMITTED, OrderStatus.FILLED_PART]) -> dict:
     ret, data = trade_ctx.order_list_query(
-        status_filter_list  = [OrderStatus.SUBMITTING, OrderStatus.SUBMITTED, OrderStatus.FILLED_PART],
+        status_filter_list  = status_filter_list,
         acc_id              = acc_id,
         trd_env             = trd_env,
     )
     if ret == RET_OK:
         if len(data) > 0:
             data = data[['order_id', 'code', 'trd_side', 'order_type', 'order_status', 'qty','price', 'create_time', 'updated_time', 'dealt_qty', 'dealt_avg_price' ]]
-            # data = data.iloc[0].to_dict(orient='records')
-            print(data)
+            data = data.iloc[0].to_dict(orient='records')
             return data
         else:
             cprint('No outstanding order', 'green')
@@ -49,6 +48,30 @@ def order_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE) -> dict:
         cprint(f'order_list_query error: {data}', 'red')
         return {}
     
+
+def hist_order_query(trade_ctx, start_time, end_time, acc_id=11377717, trd_env=TrdEnv.SIMULATE, status_filter_list=[OrderStatus.FILLED_ALL]) -> list:
+    ret, data = trade_ctx.history_order_list_query(
+        status_filter_list  = status_filter_list,
+        acc_id              = acc_id,
+        trd_env             = trd_env,
+        start               = start_time,
+        end                 = end_time,
+    )
+    cprint(f'Historical order from {start_time} to {end_time}', 'yellow', 'on_cyan')
+    if ret == RET_OK:
+        if len(data) > 0:
+            data = data[['updated_time', 'order_id', 'order_status', 'code', 'order_type', 'trd_side', 'qty', 'price', 'dealt_qty', 'dealt_avg_price']]
+            data = data.to_dict(orient='records')
+            for record in data:
+                cprint(record, 'yellow')
+            return data
+        else:
+            cprint('No historical order', 'green')
+            return {}
+    else:
+        cprint(f'history_order_list_query error: {data}', 'red')
+        return {}
+
 
 def cancel_order(trade_ctx, order_id, acc_id=11377717, trd_env=TrdEnv.SIMULATE) -> bool:
     ret, data = trade_ctx.modify_order(
@@ -60,7 +83,6 @@ def cancel_order(trade_ctx, order_id, acc_id=11377717, trd_env=TrdEnv.SIMULATE) 
         price       = 0
     )
     if ret == RET_OK:
-        cprint(f'Canceling order: {order_id}', 'yellow', 'on_cyan')
         print(data)
         cprint('Order cancelled', 'green')
         return True
@@ -69,18 +91,7 @@ def cancel_order(trade_ctx, order_id, acc_id=11377717, trd_env=TrdEnv.SIMULATE) 
         return False
 
 
-def cancel_all_order(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE):
-    ret, data = trade_ctx.cancel_all_order(trd_env=trd_env, acc_id=acc_id)
-    if ret == RET_OK:
-        cprint('Canceling all outstanding orders', 'yellow', 'on_cyan')
-        print(data)
-        cprint('All order cancelled', 'green')
-    else:
-        print('cancel_all_order error: ', data)
-
-
 def accinfo_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE):
-    # trade_ctx = OpenSecTradeContext(host='127.0.0.1', port=11111)
     ret, data = trade_ctx.accinfo_query(
         acc_id=acc_id,
         trd_env=TrdEnv.SIMULATE
@@ -89,4 +100,3 @@ def accinfo_query(trade_ctx, acc_id=11377717, trd_env=TrdEnv.SIMULATE):
         print(data)  # 取第一行的购买力
     else:
         print('accinfo_query error: ', data)
-    trade_ctx.close()

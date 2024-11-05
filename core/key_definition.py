@@ -13,13 +13,14 @@ class TrdLogic:
     SIGNAL_BUY  = 'signal_buy'
     SIGNAL_SELL = 'signal_sell'
     MARGIN_CALL = 'margin_call'
+    EOD_RECONCILIATION = 'eod_reconciliation'
 
 
 class MtmReason:
-    OPEN                = 'open'
-    CLOSE               = 'close'
+    OPEN                = TrdAction.OPEN
+    CLOSE               = TrdAction.CLOSE
+    EOD_RECONCILIATION  = TrdLogic.EOD_RECONCILIATION
     K_LINE              = 'k_line'
-    BID_ASK             = 'bid_ask'
     STOP_LOSS_UPDATE    = 'stop_loss_update'
     STOP_PROFIT_UPDATE  = 'stop_profit_update'
 

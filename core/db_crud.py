@@ -1,5 +1,6 @@
 import psycopg2
 from termcolor import cprint
+from futu import OrderStatus
 from core.env_variables import PSQL_CREDENTIALS
 from core.key_definition import DBTableColumns
 
@@ -51,3 +52,19 @@ def insert_data(table, data) -> bool:
     except Exception as e:
         cprint(f"Error: {e}", "red")
         return False
+    
+
+def search_record(table, start_time=None, end_time=None, filters={'order_status':OrderStatus.FILLED_ALL}) -> list:
+    conn   = psycopg2.connect(**PSQL_CREDENTIALS)
+    cur    = conn.cursor()
+    column_keys = get_table_columns(table)
+    query = f"SELECT * FROM {table} WHERE updated_time BETWEEN %s AND %s"
+    query += " AND " + ' AND '.join([f"{key} = %s" for key in filters.keys()])
+    cur.execute(query, [start_time, end_time, *filters.values()])
+    records = cur.fetchall()
+    cur.close()
+    conn.close()
+    records = [list(record) for record in records]
+    records = [dict(zip(column_keys, record)) for record in records]
+
+    return records

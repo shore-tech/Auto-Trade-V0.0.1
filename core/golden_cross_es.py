@@ -1,16 +1,17 @@
 import copy
 import sys
+import time
 from termcolor import cprint
 from queue import Queue
 import psycopg2
-from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, TrdSide
+from futu import TrdEnv, OpenQuoteContext, OpenFutureTradeContext, SubType, TrdSide, OrderStatus
 import requests
 from datetime import datetime, timedelta
 
 from core.futu_live_data import CurKline, CurBidAsk, CurLast
 from core.futu_static import get_trd_code, get_realtime_kline
-from core.futu_trade import TradeOrder, place_order, order_query, cancel_order
-from core.db_crud import read_last_record, insert_data
+from core.futu_trade import TradeOrder, place_order, order_query, hist_order_query, cancel_order
+from core.db_crud import read_last_record, insert_data, search_record
 from core.env_variables import TG_TOKEN, TARGET_AUDIENT_id
 from core.trading_acc import FutureTradingAccount
 from core.key_definition import TrdAction, TrdLogic, MtmReason, TimeZones, TgEmoji
@@ -45,64 +46,14 @@ class GoldenCrossEnhanceStop:
         self.closing_position    = False
         self.cur_signal_close    = None
 
+
+        self.start_time = datetime.now(TimeZones.hk_tz)
+        self.start_time = self.start_time.replace(hour=9, minute=0, second=0)
+        self.end_time = self.start_time.replace(hour=2, minute=55, second=0)+timedelta(days=1)
+
         self.trade_ctx      = OpenFutureTradeContext(host='127.0.0.1', port=11111)
+        # self.trade_ctx.unlock_trade('123456')  # unlock trade password for real trade environment
 
-
-    # def get_table_columns(self, table) -> list:
-    #     match table:
-    #         case self.table_k_line:
-    #             return DBTableColumns.k_line
-
-    #         case self.table_order:
-    #             return DBTableColumns.order_record
-
-    #         case self.table_acc_status:
-    #             return DBTableColumns.acc_status
-
-        match table:
-            case (self.table_k_line | 'golden_cross_es.dummy'):
-                columns = DBTableColumns.k_line
-
-    # def read_last_record(self, table, record_size=1) -> list:
-    #     conn   = psycopg2.connect(**PSQL_CREDENTIALS)
-    #     cur    = conn.cursor()
-    #     query  = f"SELECT * FROM {table} ORDER BY updated_time DESC LIMIT {record_size}"
-    #     cur.execute(query)
-    #     last_record = cur.fetchall()
-    #     last_record = last_record[::-1]
-    #     cur.close()
-    #     conn.close()
-    #     last_record = [list(record) for record in last_record]
-    #     last_record = [dict(zip(self.get_table_columns(table), record)) for record in last_record]
-
-    #     return last_record
-
-        column_str = ', '.join(columns)
-        value_str = ', '.join(['%s' for _ in columns])
-        query = f"INSERT INTO {table} ({column_str}) VALUES ({value_str})"
-
-    # def insert_data(self, table, data) -> bool:
-    #     conn   = psycopg2.connect(**PSQL_CREDENTIALS)
-    #     cur    = conn.cursor()
-
-    #     columns = self.get_table_columns(table)
-    #     column_str = ', '.join(columns)
-    #     value_str = ', '.join(['%s' for _ in columns])
-    #     query = f"INSERT INTO {table} ({column_str}) VALUES ({value_str})"
-
-    #     try:
-    #         cur.execute(query, data)
-    #         conn.commit()
-    #         cprint(f"inserting to: {table}", "blue")
-    #         cprint(f"inserting data: {data}", "blue")
-    #         cprint(f"execute result: {cur.statusmessage}", "blue")
-    #         cur.close()
-    #         conn.close()
-    #         return True
-        
-    #     except Exception as e:
-    #         cprint(f"Error: {e}", "red")
-    #         return False
 
 
     # functions for opening position
@@ -239,23 +190,76 @@ class GoldenCrossEnhanceStop:
         insert_data(self.table_acc_status, values)
 
 
+    def order_reconciliation(self) -> None:
+        # check if the order in broker account is align with the self-recorded
+        # if not, send notification via telegram
+        start_time        = self.start_time.strftime("%Y-%m-%d %H:%M:%S")
+        end_time          = self.end_time.replace(hour=4, minute=0).strftime("%Y-%m-%d %H:%M:%S")
+        order_broker      = hist_order_query(self.trade_ctx, start_time, end_time)
+        order_db          = search_record(self.table_order, start_time, end_time)
+        order_list_db     = [order['order_id'] for order in order_db]
+        order_discrepancy = [order for order in order_broker if order['order_id'] not in order_list_db]
+        if len(order_discrepancy) == 0: 
+            print('No order discrepancy found')
+            return
+        msg = f'{TgEmoji.WARN_L1 * 5} \nOrder discrepancy from {start_time} to {end_time} found: \n'
+        cprint('order_discrepancy:', 'red', 'on_light_grey')
+        for record in order_discrepancy:
+            cprint(record, 'red')
+            msg += f'{record['order_id']} - {record['trd_side']} {record['code']} @ {record['dealt_avg_price']} X {record['dealt_qty']} - {record['updated_time'].split(' ')[1]}\n'
+        msg += f'{TgEmoji.WARN_L1 * 5} \nPlease proceed to your trading machine to reconcile the discrepancy'
+        self.tg_notify(msg)
+
+        is_to_reconcile = input('Do you want to reconcile the order discrepancy? (y/n): ')
+        if is_to_reconcile.lower() == 'y':
+            current_pos_size = self.trade_account.position_size 
+            num_sell         = len([order for order in order_discrepancy if order['trd_side'] == TrdSide.SELL])
+            num_buy          = len(order_discrepancy) - num_sell
+            if current_pos_size == 0:
+                open_trd_side = TrdSide.SELL if num_sell > num_buy else TrdSide.BUY
+            else:
+                open_trd_side = TrdSide.SELL if current_pos_size < 0 else TrdSide.BUY
+            
+            for record in order_discrepancy:
+                if record['trd_side'] == open_trd_side:
+                    action = TrdAction.OPEN
+                    commission, pnl_realized = self.trade_account.open_position(record['dealt_qty'], record['dealt_avg_price'])
+                else:
+                    action = TrdAction.CLOSE
+                    commission, pnl_realized = self.trade_account.close_position(record['dealt_qty'], record['dealt_avg_price'])
+                values = list(record.values()) + [action, TrdLogic.EOD_RECONCILIATION, commission, pnl_realized]
+                self.insert_data(self.table_order, values)
+                self.record_acc_mtm(record['updated_time'], record['dealt_avg_price'], MtmReason.EOD_RECONCILIATION, None, record['order_id'])
+            cprint('Order discrepancy reconciled', 'green')
+        return
+
+
+    def position_reconciliation(self) -> None:
+        pass
+
+
+
     def eod_routine(self):
         # remove all pending orders 5 minutes before market close
-        # chekc if position in broker acc is align with self-recorded status(su_trd_acc)
-        # any discrepancy -> send notification via telegram
         outstanding_order = order_query(self.trade_ctx)
         if len(outstanding_order) > 0:
             # cancel all outstanding orders
             for _, order in outstanding_order.iterrows():
+                msg = f'Order {order["order_id"]}, {order["trd_side"]} {order["code"]} @ {order["price"]} X {order["qty"]}'
+                cprint(f'Canceling, {msg} ', 'yellow', 'on_cyan')
                 if cancel_order(self.trade_ctx, order['order_id']):
-                    msg = f'Order {order["order_id"]}, {order["trd_side"]} {order["code"]} @ {order["price"]} X {order["qty"]}, is cancelled'
-                    cprint(msg, 'yellow')
+                    msg = f'{TgEmoji.WARN_L1 * 3} \n{msg}, is cancelled'
+                    self.tg_notify(msg)
+                else:
+                    msg = f'{TgEmoji.WARN_L2 * 3} \n{msg}, cannot be cancelled'
                     self.tg_notify(msg)
             self.trade_account.pending_orders = {}
         else:
             print('No outstanding order')
+        time.sleep(5)
 
-        # TODO: trade reconciliation -> 
+        # trade reconciliation -> 
+        self.order_reconciliation()
 
         # TODO: position reconciliation
 
@@ -263,33 +267,28 @@ class GoldenCrossEnhanceStop:
 
 
     def tg_notify(self, msg) -> None:
-        cprint(f'Sending notification: {msg}', 'yellow')
+        cprint(f'Sending notification: \n{msg}', 'yellow')
         result = requests.get(f'https://api.telegram.org/bot{TG_TOKEN}/sendMessage?chat_id={TARGET_AUDIENT_id}&text={msg}')
-        print(result.json())
+        if result.json()['ok']:
+            cprint('Notification sent', 'green')
 
 
     def run(self):
-        start_time = datetime.now(TimeZones.hk_tz)
-        if start_time.hour < 3:
-            end_time = start_time.replace(hour=2, minute=55, second=0)
-        else:
-            end_time = start_time.replace(hour=2, minute=55, second=0)+timedelta(days=1)
 
         quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
         quote_ctx.set_handler(CurKline(self.data_q))
         quote_ctx.set_handler(CurLast(self.data_q))
         quote_ctx.set_handler(CurBidAsk(self.data_q))
         quote_ctx.subscribe([self.trd_code], [self.bar_size, SubType.ORDER_BOOK, SubType.QUOTE])
-
         
-        # trade_ctx.unlock_trade('123456')
         self.trade_ctx.set_handler(TradeOrder(self.data_q))
-
 
         self.last_k_record = get_realtime_kline(self.trd_code, self.bar_size, self.long_window)
         last_k_dummy = None
 
         while True:
+            if datetime.now(TimeZones.hk_tz) > self.end_time:
+                break
             data_type, data = self.data_q.get()
             match data_type:
                 case "k_line":      # check if signal generated
@@ -356,9 +355,9 @@ class GoldenCrossEnhanceStop:
 
                     cprint(f"Data type: {data_type}, Data: {data}", "yellow")
 
-            if datetime.now(TimeZones.hk_tz) > end_time:
-                self.tg_notify('Market is closing, closing all outstanding orders')
-                self.eod_routine()
-                break
+
+        self.tg_notify('Market is closing, closing all outstanding orders')
+        self.eod_routine()
+
 
 
