@@ -61,7 +61,7 @@
 -- CREATE TABLE golden_cross_es.acc_status (
 --     updated_time    VARCHAR(30) NOT NULL,
 --     reason          VARCHAR(20) NOT NULL,
---     nav             DOUBLE PRECISION NOT NULL,
+--     bal_equity      DOUBLE PRECISION NOT NULL,
 --     bal_cash        DOUBLE PRECISION NOT NULL,
 --     bal_available   DOUBLE PRECISION NOT NULL,
 --     margin_i        DOUBLE PRECISION NOT NULL,

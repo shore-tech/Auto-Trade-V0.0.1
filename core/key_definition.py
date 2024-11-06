@@ -36,7 +36,7 @@ class DBTableColumns:
     acc_status = [
         'updated_time', 
         'reason', 
-        'nav', 'bal_cash', 'bal_available', 'margin_i', 'margin_m', 'cap_usage', 
+        'bal_equity', 'bal_cash', 'bal_available', 'margin_i', 'margin_m', 'cap_usage', 
         'code', 'pos_size', 'pos_price', 'mkt_price', 'stop_level', 'target_level', 'pnl_unrealized', 
         'k_type', 'order_id'
     ]

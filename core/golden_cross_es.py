@@ -22,18 +22,8 @@ class GoldenCrossEnhanceStop:
         self.table_k_line       = "golden_cross_es.k_line"
         self.table_order        = "golden_cross_es.order_record"
         self.table_acc_status   = "golden_cross_es.acc_status"
-        # TODO: check acc_status table -> is_close_only = True -> no trading
-        acc_status = read_last_record(self.table_acc_status, 1)
-        if len(acc_status) == 0:
-            self.is_close_only = False
-        else:
-            pass
 
-        self.trd_code     = get_trd_code(underlying)
-
-        self.trd_env        = trd_env
-        self.acc_id         = acc_id
-        self.trade_account  = FutureTradingAccount(initial_capital)
+        # trading parameters
         self.bar_size       = bar_size
         self.para_dict      = para_dict
         self.long_window    = para_dict["long_window"]
@@ -45,14 +35,49 @@ class GoldenCrossEnhanceStop:
         self.closing_position    = False
         self.cur_signal_close    = None
 
-
         self.start_time = datetime.now(TimeZones.hk_tz)
         self.start_time = self.start_time.replace(hour=9, minute=0, second=0)
         self.end_time = self.start_time.replace(hour=2, minute=55, second=0)+timedelta(days=1)
 
-        self.trade_ctx      = OpenFutureTradeContext(host='127.0.0.1', port=11111)
+        self.trade_ctx = OpenFutureTradeContext(host='127.0.0.1', port=11111)
         # self.trade_ctx.unlock_trade('123456')  # unlock trade password for real trade environment
+        self.trd_env        = trd_env
+        self.acc_id         = acc_id
 
+        last_acc_status     = read_last_record(self.table_acc_status, 1)
+
+        # resume the trading status
+        current_trd_code    = get_trd_code(underlying)
+        if len(last_acc_status) == 0:
+            self.trade_account  = FutureTradingAccount(initial_capital)
+            self.trd_code = current_trd_code
+            self.is_close_only = False
+        else:
+            last_acc_status = last_acc_status[0]
+            self.trade_account  = FutureTradingAccount(
+                initial_capital,
+                bal_cash         = last_acc_status['bal_cash'],
+                bal_available    = last_acc_status['bal_available'],
+                bal_equity              = last_acc_status['bal_equity'],
+                pnl_unrealized   = last_acc_status['pnl_unrealized'],
+                margin_initial   = last_acc_status['margin_i'],
+                cap_usage        = last_acc_status['cap_usage'],
+                position_size    = last_acc_status['pos_size'],
+                position_price   = last_acc_status['pos_price'],
+                stop_level       = last_acc_status['stop_level'],
+            )
+
+            prev_trd_code       = last_acc_status['code']
+            if self.trade_account.position_size != 0 and current_trd_code != prev_trd_code:
+                self.trd_code = prev_trd_code
+                self.is_close_only = True
+            else:
+                self.trd_code = current_trd_code
+                self.is_close_only = False
+        
+        self.order_reconciliation()
+        self.position_reconciliation()
+        sys.exit()
 
 
     # functions for opening position
@@ -172,7 +197,7 @@ class GoldenCrossEnhanceStop:
         values = [
             update_time,
             reason,
-            self.trade_account.nav,
+            self.trade_account.bal_equity,
             self.trade_account.bal_cash,
             self.trade_account.bal_available,
             self.trade_account.margin_initial,
@@ -203,6 +228,7 @@ class GoldenCrossEnhanceStop:
         if len(order_discrepancy) == 0: 
             print('No order discrepancy found')
             return
+        
         msg = f'{TgEmoji.WARN_L1 * 5} \nOrder discrepancy from {start_time} to {end_time} found: \n'
         cprint('order_discrepancy:', 'red', 'on_light_grey')
         for record in order_discrepancy:
@@ -213,24 +239,24 @@ class GoldenCrossEnhanceStop:
 
         is_to_reconcile = input('Do you want to reconcile the order discrepancy? (y/n): ')
         if is_to_reconcile.lower() == 'y':
-            current_pos_size = self.trade_account.position_size 
-            num_sell         = len([order for order in order_discrepancy if order['trd_side'] == TrdSide.SELL])
-            num_buy          = len(order_discrepancy) - num_sell
-            if current_pos_size == 0:
-                open_trd_side = TrdSide.SELL if num_sell > num_buy else TrdSide.BUY
-            else:
-                open_trd_side = TrdSide.SELL if current_pos_size < 0 else TrdSide.BUY
-            
+            order_discrepancy = sorted(order_discrepancy, key=lambda x: x['order_id'])
             for record in order_discrepancy:
-                if record['trd_side'] == open_trd_side:
+                record['updated_time']  = datetime.now(TimeZones.hk_tz).strftime('%Y-%m-%d %H:%M:%S')
+                current_pos_size        = self.trade_account.position_size
+                trd_side                = 1 if record['trd_side']==TrdSide.BUY else -1
+                t_size                  = record['dealt_qty'] * trd_side
+                if current_pos_size * trd_side >= 0:
                     action = TrdAction.OPEN
-                    commission, pnl_realized = self.trade_account.open_position(record['dealt_qty'], record['dealt_avg_price'])
-                else:
+                    commission, pnl_realized = self.trade_account.open_position(t_size, record['dealt_avg_price'])
+                    self.update_stop_level(record['updated_time'], record['dealt_avg_price'], trd_side)
+                elif current_pos_size * trd_side < 0:
                     action = TrdAction.CLOSE
-                    commission, pnl_realized = self.trade_account.close_position(record['dealt_qty'], record['dealt_avg_price'])
+                    commission, pnl_realized = self.trade_account.close_position(t_size, record['dealt_avg_price'])
                 values = list(record.values()) + [action, TrdLogic.EOD_RECONCILIATION, commission, pnl_realized]
                 insert_data(self.table_order, values)
                 self.record_acc_mtm(record['updated_time'], record['dealt_avg_price'], MtmReason.EOD_RECONCILIATION, None, record['order_id'])
+                time.sleep(1)  # sleep for 1 second to avoid the primary key conflict in acc_status table
+
             cprint('Order discrepancy reconciled', 'green')
         return
 
@@ -238,12 +264,13 @@ class GoldenCrossEnhanceStop:
     def position_reconciliation(self) -> None:
         # position discrepancy <- wrong code(month-end roll over), wrong position size
         broker_record   = position_query(self.trade_ctx)
-        db_record       = read_last_record(self.table_acc_status, 1)[0]
+        db_record       = read_last_record(self.table_acc_status, 1)[0] # only for trading one underlying
         if broker_record is None:
             cprint('Broker position query error', 'red')
             msg = f'{TgEmoji.WARN_L2 * 5} \nposition_reconciliation(): Broker position query error\n Please proceed to your trading machine to reconcile the discrepancy \n{TgEmoji.WARN_L2 * 5}'
             self.tg_notify(msg)
             return
+        
         msg = f'{TgEmoji.WARN_L2 * 5} \nPosition discrepancy found: \n'
         is_position_discrepancy = False
         if len(broker_record) == 0:
@@ -251,7 +278,6 @@ class GoldenCrossEnhanceStop:
                 is_position_discrepancy = True
                 msg += f'Broker Record: empty, self-record: {db_record['pos_sizes']} X {db_record['code']} @ {db_record['pos_price']}\n'
         else:
-            db_record = db_record[0]        # only for trading one underlying
             if broker_record['code'] != db_record['code']:
                 is_position_discrepancy = True
                 msg += f'code -> broker: {broker_record['code']}, self-record: {db_record['code']}\n'
@@ -264,7 +290,7 @@ class GoldenCrossEnhanceStop:
         
         if is_position_discrepancy:
             self.tg_notify(msg)
-            # TODO: think of how to reconcile the position discrepancy
+            # TODO: think of how to reconcile the position discrepancy -> close all position?
         else:
             cprint('No position discrepancy found', 'green')
 
@@ -295,8 +321,6 @@ class GoldenCrossEnhanceStop:
         self.position_reconciliation()
 
 
-
-
     def tg_notify(self, msg) -> None:
         cprint(f'Sending notification: \n{msg}', 'yellow')
         result = requests.get(f'https://api.telegram.org/bot{TG_TOKEN}/sendMessage?chat_id={TARGET_AUDIENT_id}&text={msg}')
@@ -316,6 +340,10 @@ class GoldenCrossEnhanceStop:
 
         self.last_k_record = get_realtime_kline(self.trd_code, self.bar_size, self.long_window)
         last_k_dummy = None
+
+        while self.is_close_only:
+            # TODO: run trading untill all current position is closed
+            pass
 
         while True:
             if datetime.now(TimeZones.hk_tz) > self.end_time:
