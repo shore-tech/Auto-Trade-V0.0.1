@@ -21,10 +21,11 @@ def get_realtime_kline(code:str, kl_type:str, num:int) -> list | str:
         ret, data = quote_ctx.get_cur_kline(code, num, kl_type)
         quote_ctx.close()
         if ret == RET_OK:
-            # print(data)
             data = data[['time_key', 'code', 'open', 'high', 'low', 'close', 'volume']]
             data['k_type'] = kl_type
-            return data.values.tolist()
+            data.rename(columns={'time_key':'updated_time'}, inplace=True)
+            data = data.to_dict(orient='records')
+            return data
         else:
             cprint("Faital Error: get_realtime_kline fail", "red")
             sys.exit()
@@ -35,4 +36,5 @@ def get_realtime_kline(code:str, kl_type:str, num:int) -> list | str:
 
 
 if __name__ == '__main__':
-    get_realtime_kline('HK.HSImain', 'K_5M', 2)
+    result = get_realtime_kline('HK.HSImain', 'K_5M', 2)
+    print(result)

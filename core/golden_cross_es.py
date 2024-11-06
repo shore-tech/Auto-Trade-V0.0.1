@@ -57,10 +57,9 @@ class GoldenCrossEnhanceStop:
 
     # functions for opening position
     def generate_signal_open(self, last_k_dummy) -> int:
-        # calculate the short and long moving averages
-        # determine the signals
+        # calculate the short and long moving averages -> determine the signals
         # insert the data into psql
-        self.last_k_record.append(list(last_k_dummy))
+        self.last_k_record.append(last_k_dummy)
         if len(self.last_k_record) > self.long_window + 1:
             del self.last_k_record[0]                       # remove the oldest record -> keep the size of last_k-records always < long_window + 1
 
@@ -72,12 +71,12 @@ class GoldenCrossEnhanceStop:
         else:                                               # calculate sma and signal
             short_window = self.last_k_record[-self.short_window:]
             long_window  = self.last_k_record[-self.long_window:]
-            sma_short   = sum([record[5] for record in short_window]) / self.short_window
-            sma_long    = sum([record[5] for record in long_window]) / self.long_window
+            sma_short   = sum([record['close'] for record in short_window]) / self.short_window
+            sma_long    = sum([record['close'] for record in long_window]) / self.long_window
             signal = 0
             if len(self.last_k_record) == self.long_window + 1:
-                sma_short_prev = sum([record[5] for record in self.last_k_record[-self.short_window-1:-1]]) / self.short_window
-                sma_long_prev  = sum([record[5] for record in self.last_k_record[-self.long_window-1:-1]]) / self.long_window
+                sma_short_prev = sum([record['close'] for record in self.last_k_record[-self.short_window-1:-1]]) / self.short_window
+                sma_long_prev  = sum([record['close'] for record in self.last_k_record[-self.long_window-1:-1]]) / self.long_window
                 if sma_short_prev < sma_long_prev and sma_short > sma_long:
                     signal = 1
                 elif sma_short_prev > sma_long_prev and sma_short < sma_long:
@@ -85,8 +84,11 @@ class GoldenCrossEnhanceStop:
                 else:
                     signal = 0
 
-        self.last_k_record[-1] = self.last_k_record[-1] + [sma_short, sma_long, signal]
-        insert_data(self.table_k_line, self.last_k_record[-1])
+        self.last_k_record[-1]['sma_short'] = sma_short
+        self.last_k_record[-1]['sma_long'] = sma_long
+        self.last_k_record[-1]['signal'] = signal
+
+        insert_data(self.table_k_line, list(self.last_k_record[-1].values()))
         cprint('recorded k-line data ...', 'yellow')
         return signal
 
@@ -227,7 +229,7 @@ class GoldenCrossEnhanceStop:
                     action = TrdAction.CLOSE
                     commission, pnl_realized = self.trade_account.close_position(record['dealt_qty'], record['dealt_avg_price'])
                 values = list(record.values()) + [action, TrdLogic.EOD_RECONCILIATION, commission, pnl_realized]
-                self.insert_data(self.table_order, values)
+                insert_data(self.table_order, values)
                 self.record_acc_mtm(record['updated_time'], record['dealt_avg_price'], MtmReason.EOD_RECONCILIATION, None, record['order_id'])
             cprint('Order discrepancy reconciled', 'green')
         return
@@ -322,11 +324,6 @@ class GoldenCrossEnhanceStop:
             match data_type:
                 case "k_line":      # check if signal generated
                     if last_k_dummy is not None:
-                        # if data[0] != last_k_dummy[0]:
-                        #     # when there is a new k-line data, generate signal and record the current position status
-                        #     self.cur_signal_open = self.generate_signal_open(last_k_dummy)
-                        #     self.trade_account.mark_to_market(data[5])
-                        #     self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE, k_type=data[7])
                         if data['updated_time'] != last_k_dummy['updated_time']:
                             # when there is a new k-line data, generate signal and record the current position status
                             self.cur_signal_open = self.generate_signal_open(last_k_dummy)
@@ -337,11 +334,10 @@ class GoldenCrossEnhanceStop:
                 case "last":        # last price data is only for determining if existing position should be closed
                     if self.trade_account.position_size != 0:
                         pos_direction = self.trade_account.position_size / abs(self.trade_account.position_size)
-                        # self.update_stop_level(data[1] ,data[2], pos_direction)
-                        # if not self.closing_position:
-                        #     self.cur_signal_close = self.generate_signal_close(data[-1])
                         self.update_stop_level(data['updated_time'], data['last_price'], pos_direction)
-                    pass
+                        if not self.closing_position:
+                            self.cur_signal_close = self.generate_signal_close(data['last_price'])
+
 
                 case "bid_ask":     # bid_ask data is only for determining the price for order
                     if self.cur_signal_open != 0:
@@ -387,7 +383,7 @@ class GoldenCrossEnhanceStop:
                         case _:
                             values = list(data.values()) + [action, logic, 0, 0]
                     # record the order record
-                    self.insert_data(self.table_order, values)
+                    insert_data(self.table_order, values)
                     cprint('recorded order record ...', 'yellow')
 
                     cprint(f"Data type: {data_type}, Data: {data}", "yellow")
