@@ -7,16 +7,17 @@ class CurKline(CurKlineHandlerBase):
     def on_recv_rsp(self, rsp_pb):
         ret_code, data = super().on_recv_rsp(rsp_pb)
         if ret_code == RET_OK:
-            time_key = data["time_key"][0]
-            code = data["code"][0]
-            open = float(data["open"][0])
-            high = float(data["high"][0])
-            low = float(data["low"][0])
-            close = float(data["close"][0])
-            volume = int(data["volume"][0])
-            k_type = data["k_type"][0]
-            self.queue.put(('k_line' ,(time_key, code, open, high, low, close, volume, k_type)))
-
+            result = {
+                'updated_time': data["time_key"][0],
+                'code'        : data["code"][0],
+                'open'        : float(data["open"][0]),
+                'high'        : float(data["high"][0]),
+                'low'         : float(data["low"][0]),
+                'close'       : float(data["close"][0]),
+                'volume'      : int(data["volume"][0]),
+                'k_type'      : data["k_type"][0]
+            }
+            self.queue.put(('k_line', result))
 
 class CurBidAsk(OrderBookHandlerBase):
     def __init__(self, queue):
@@ -25,11 +26,13 @@ class CurBidAsk(OrderBookHandlerBase):
     def on_recv_rsp(self, rsp_str):
         ret_code, data = super().on_recv_rsp(rsp_str)
         if ret_code == RET_OK:
-            code      = data['code']
-            data_time = data['svr_recv_time_bid'] if data['svr_recv_time_bid'] != '' else data['svr_recv_time_ask']
-            bid_price = int(data['Bid'][0][0])
-            ask_price = int(data['Ask'][0][0])
-            self.queue.put(('bid_ask', (code, data_time, bid_price, ask_price)))
+            result = {
+                'code'        : data['code'],
+                'updated_time': data['svr_recv_time_bid'] if data['svr_recv_time_bid'] != '' else data['svr_recv_time_ask'],
+                'bid_price'   : int(data['Bid'][0][0]),
+                'ask_price'   : int(data['Ask'][0][0])
+            }
+            self.queue.put(('bid_ask', result))
             
     
 class CurLast(StockQuoteHandlerBase):
@@ -39,8 +42,10 @@ class CurLast(StockQuoteHandlerBase):
     def on_recv_rsp(self, rsp_str):
         ret_code, data = super().on_recv_rsp(rsp_str)
         if ret_code == RET_OK:
-            code        = data.at[0, 'code']
-            data_time   = data.at[0, 'data_time']
-            last_price  = int(data.at[0, 'last_price'])
-            self.queue.put(('last', (code, data_time, last_price)))
+            result = {
+                'code'        : data.at[0, 'code'],
+                'updated_time': data.at[0, 'data_time'],
+                'last_price'  : int(data.at[0, 'last_price'])
+            }
+            self.queue.put(('last', result))
         

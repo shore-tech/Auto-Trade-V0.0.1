@@ -2,7 +2,7 @@ import sys
 from futu import OpenQuoteContext, RET_OK
 from termcolor import cprint
 
-def get_trd_code(code:str):
+def get_trd_code(code:str) -> str:
     quote_ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
     ret, data = quote_ctx.get_future_info([code])
     if ret == RET_OK:

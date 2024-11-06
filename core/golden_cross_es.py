@@ -322,29 +322,37 @@ class GoldenCrossEnhanceStop:
             match data_type:
                 case "k_line":      # check if signal generated
                     if last_k_dummy is not None:
-                        if data[0] != last_k_dummy[0]:
+                        # if data[0] != last_k_dummy[0]:
+                        #     # when there is a new k-line data, generate signal and record the current position status
+                        #     self.cur_signal_open = self.generate_signal_open(last_k_dummy)
+                        #     self.trade_account.mark_to_market(data[5])
+                        #     self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE, k_type=data[7])
+                        if data['updated_time'] != last_k_dummy['updated_time']:
                             # when there is a new k-line data, generate signal and record the current position status
                             self.cur_signal_open = self.generate_signal_open(last_k_dummy)
-                            self.trade_account.mark_to_market(data[5])
-                            self.record_acc_mtm(data[0], data[5], MtmReason.K_LINE, k_type=data[7])
+                            self.trade_account.mark_to_market(data['close'])
+                            self.record_acc_mtm(data['updated_time'], data['close'], MtmReason.K_LINE, k_type=data['k_type'])
                     last_k_dummy = data
 
                 case "last":        # last price data is only for determining if existing position should be closed
                     if self.trade_account.position_size != 0:
                         pos_direction = self.trade_account.position_size / abs(self.trade_account.position_size)
-                        self.update_stop_level(data[1] ,data[2], pos_direction)
-                        if not self.closing_position:
-                            self.cur_signal_close = self.generate_signal_close(data[-1])
+                        # self.update_stop_level(data[1] ,data[2], pos_direction)
+                        # if not self.closing_position:
+                        #     self.cur_signal_close = self.generate_signal_close(data[-1])
+                        self.update_stop_level(data['updated_time'], data['last_price'], pos_direction)
                     pass
 
                 case "bid_ask":     # bid_ask data is only for determining the price for order
                     if self.cur_signal_open != 0:
                         cprint(f"Signal_open: {self.cur_signal_open}, Data: {data}", "yellow")
-                        self.action_on_signal_open(data[-2], data[-1])
+                        # self.action_on_signal_open(data[-2], data[-1])
+                        self.action_on_signal_open(data['bid_price'], data['ask_price'])
 
                     if self.cur_signal_close is not None:
                         cprint(f"Signal_close: {self.cur_signal_close}, Data: {data}", "yellow")
-                        self.action_on_signal_close(data[-2], data[-1])
+                        # self.action_on_signal_close(data[-2], data[-1])
+                        self.action_on_signal_close(data['bid_price'], data['ask_price'])
 
                 case "order":       # order type data is for: 1)recording orders, and 2)update the account status
                     try:
