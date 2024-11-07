@@ -44,7 +44,7 @@ class CurLast(StockQuoteHandlerBase):
         if ret_code == RET_OK:
             result = {
                 'code'        : data.at[0, 'code'],
-                'updated_time': data.at[0, 'data_time'],
+                'updated_time': f'{data.at[0, "data_date"]} {data.at[0, "data_time"]}',
                 'last_price'  : int(data.at[0, 'last_price'])
             }
             self.queue.put(('last', result))
