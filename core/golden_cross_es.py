@@ -344,7 +344,61 @@ class GoldenCrossEnhanceStop:
         last_k_dummy = None
 
         while self.is_close_only:
-            # TODO: run trading untill all current position is closed
+            # TODO: run trading untill all current position is closed            
+            if self.trade_account.position_size == 0:
+                self.is_close_only = False
+                break
+            # close all position
+            data_type, data = self.data_q.get()
+            match data_type:
+                case "last":        # last price data is only for determining if existing position should be closed
+                    pos_direction = self.trade_account.position_size / abs(self.trade_account.position_size)
+                    self.update_stop_level(data['updated_time'], data['last_price'], pos_direction)
+                    if not self.closing_position:
+                        self.cur_signal_close = self.generate_signal_close(data['last_price'])
+
+                case "bid_ask":     # bid_ask data is only for determining the price for order
+                    if self.cur_signal_close is not None:
+                        cprint(f"Signal_close: {self.cur_signal_close}, Data: {data}", "yellow")
+                        self.action_on_signal_close(data['bid_price'], data['ask_price'])
+
+                case "order":       # order type data is for: 1)recording orders, and 2)update the account status
+                    try:
+                        self.trade_account.pending_orders[data['order_id']]['order_status'] = data['order_status']
+                        action = self.trade_account.pending_orders[data['order_id']]['action']
+                        logic  = self.trade_account.pending_orders[data['order_id']]['logic']
+                    except Exception as e:
+                        cprint(f"Error: {e}", "red")
+                        cprint(f"order {data['order_id']} is not initiated by this program", "red", "on_light_cyan")
+                        sys.exit()
+
+                    match data['order_status']:
+                        # TODO: record transaction
+                        case 'FILLED_ALL':
+                            # TODO: record the su_trd_acc status
+                            t_side = -1 if data['trd_side'] == TrdSide.SELL else 1
+                            t_size = t_side * data['dealt_qty']
+                            t_price = data['dealt_avg_price']
+                            if action == TrdAction.OPEN:
+                                commission, pnl_realized = self.trade_account.open_position(t_size, t_price)
+                                self.update_stop_level(data['updated_time'], t_price, t_side)
+                            else:
+                                commission, pnl_realized = self.trade_account.close_position(t_size, t_price)
+                                self.closing_position = False
+                            # record acc status
+                            self.record_acc_mtm(data['updated_time'], t_price, action, None, data['order_id'])
+
+                            values = list(data.values()) + [action, logic, commission, pnl_realized]
+                            # remove the order from pending_orders
+                            del self.trade_account.pending_orders[data['order_id']]
+
+                        case _:
+                            values = list(data.values()) + [action, logic, 0, 0]
+                    # record the order record
+                    cprint('recording order record ...', 'yellow')
+                    insert_data(self.table_order, values)
+
+
             pass
 
         while True:
