@@ -58,9 +58,14 @@ def search_record(table, start_time=None, end_time=None, filters={'order_status'
     conn   = psycopg2.connect(**PSQL_CREDENTIALS)
     cur    = conn.cursor()
     column_keys = get_table_columns(table)
-    query = f"SELECT * FROM {table} WHERE updated_time BETWEEN %s AND %s"
-    query += " AND " + ' AND '.join([f"{key} = %s" for key in filters.keys()])
-    cur.execute(query, [start_time, end_time, *filters.values()])
+    query = f"SELECT * FROM {table} WHERE "
+    data = []
+    if start_time and end_time: 
+        query += " updated_time BETWEEN %s AND %s AND "
+        data += [start_time, end_time]
+    query += ' AND '.join([f"{key} = %s" for key in filters.keys()])
+    data += list(filters.values())
+    cur.execute(query, data)
     records = cur.fetchall()
     cur.close()
     conn.close()

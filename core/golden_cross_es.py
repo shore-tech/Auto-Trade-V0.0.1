@@ -30,6 +30,7 @@ class GoldenCrossEnhanceStop:
         self.short_window   = para_dict["short_window"]
         self.stop_dist      = para_dict["stop_loss"]
         self.ladder         = para_dict["ladder"]
+
         self.data_q         = Queue()
         self.cur_signal_open     = 0
         self.closing_position    = False
@@ -77,7 +78,6 @@ class GoldenCrossEnhanceStop:
         
         self.order_reconciliation()
         self.position_reconciliation()
-        sys.exit()
 
 
     # functions for opening position
@@ -113,8 +113,8 @@ class GoldenCrossEnhanceStop:
         self.last_k_record[-1]['sma_long'] = sma_long
         self.last_k_record[-1]['signal'] = signal
 
+        cprint('recording k-line data...', 'yellow')
         insert_data(self.table_k_line, list(self.last_k_record[-1].values()))
-        cprint('recorded k-line data ...', 'yellow')
         return signal
 
 
@@ -147,10 +147,11 @@ class GoldenCrossEnhanceStop:
         prev_stop_level = copy.deepcopy(self.trade_account.stop_level)
         if prev_stop_level is None:
             self.trade_account.stop_level = mkt_price - pos_direction * self.stop_dist
-        elif (pos_direction > 0) and (mkt_price > prev_stop_level + self.stop_dist + self.ladder):
-            self.trade_account.stop_level += self.ladder
-        elif (pos_direction < 0) and (mkt_price < prev_stop_level - self.stop_dist - self.ladder):
-            self.trade_account.stop_level -= self.ladder
+        else:
+            diff = pos_direction * (mkt_price - (prev_stop_level + pos_direction * self.stop_dist))
+            steps = diff // self.ladder     # this approach will cope with uncontiguous price movement, e.g. gap up/down
+            if steps > 0:
+                self.trade_account.stop_level += pos_direction * self.ladder * steps
         
         if self.trade_account.stop_level != prev_stop_level:
             self.record_acc_mtm(update_time, mkt_price, MtmReason.STOP_LOSS_UPDATE)
@@ -197,9 +198,9 @@ class GoldenCrossEnhanceStop:
         values = [
             update_time,
             reason,
-            self.trade_account.bal_equity,
-            self.trade_account.bal_cash,
-            self.trade_account.bal_available,
+            round(self.trade_account.bal_equity, 2),
+            round(self.trade_account.bal_cash, 2),
+            round(self.trade_account.bal_available, 2),
             self.trade_account.margin_initial,
             self.trade_account.margin_initial * self.trade_account.margin_maintanence_rate,
             self.trade_account.cap_usage,
@@ -278,6 +279,7 @@ class GoldenCrossEnhanceStop:
                 is_position_discrepancy = True
                 msg += f'Broker Record: empty, self-record: {db_record['pos_sizes']} X {db_record['code']} @ {db_record['pos_price']}\n'
         else:
+            broker_record = broker_record[0]
             if broker_record['code'] != db_record['code']:
                 is_position_discrepancy = True
                 msg += f'code -> broker: {broker_record['code']}, self-record: {db_record['code']}\n'
@@ -355,8 +357,9 @@ class GoldenCrossEnhanceStop:
                         if data['updated_time'] != last_k_dummy['updated_time']:
                             # when there is a new k-line data, generate signal and record the current position status
                             self.cur_signal_open = self.generate_signal_open(last_k_dummy)
-                            self.trade_account.mark_to_market(data['close'])
-                            self.record_acc_mtm(data['updated_time'], data['close'], MtmReason.K_LINE, k_type=data['k_type'])
+                            if self.trade_account.position_size != 0:
+                                self.trade_account.mark_to_market(data['close'])
+                                self.record_acc_mtm(data['updated_time'], data['close'], MtmReason.K_LINE, k_type=data['k_type'])
                     last_k_dummy = data
 
                 case "last":        # last price data is only for determining if existing position should be closed
@@ -366,16 +369,13 @@ class GoldenCrossEnhanceStop:
                         if not self.closing_position:
                             self.cur_signal_close = self.generate_signal_close(data['last_price'])
 
-
                 case "bid_ask":     # bid_ask data is only for determining the price for order
                     if self.cur_signal_open != 0:
                         cprint(f"Signal_open: {self.cur_signal_open}, Data: {data}", "yellow")
-                        # self.action_on_signal_open(data[-2], data[-1])
                         self.action_on_signal_open(data['bid_price'], data['ask_price'])
 
                     if self.cur_signal_close is not None:
                         cprint(f"Signal_close: {self.cur_signal_close}, Data: {data}", "yellow")
-                        # self.action_on_signal_close(data[-2], data[-1])
                         self.action_on_signal_close(data['bid_price'], data['ask_price'])
 
                 case "order":       # order type data is for: 1)recording orders, and 2)update the account status
@@ -412,9 +412,6 @@ class GoldenCrossEnhanceStop:
                             values = list(data.values()) + [action, logic, 0, 0]
                     # record the order record
                     insert_data(self.table_order, values)
-                    cprint('recorded order record ...', 'yellow')
-
-                    cprint(f"Data type: {data_type}, Data: {data}", "yellow")
 
 
         self.tg_notify('Market is closing, closing all outstanding orders')
