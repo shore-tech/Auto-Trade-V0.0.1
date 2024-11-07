@@ -279,7 +279,7 @@ class GoldenCrossEnhanceStop:
         if len(broker_record) == 0:
             if db_record['pos_size'] != 0: 
                 is_position_discrepancy = True
-                msg += f'Broker Record: empty, self-record: {db_record['pos_sizes']} X {db_record['code']} @ {db_record['pos_price']}\n'
+                msg += f'Broker Record: empty, self-record: {db_record['pos_size']} X {db_record['code']} @ {db_record['pos_price']}\n'
         else:
             broker_record = broker_record[0]
             if broker_record['code'] != db_record['code']:
@@ -294,7 +294,10 @@ class GoldenCrossEnhanceStop:
         
         if is_position_discrepancy:
             self.tg_notify(msg)
-            # TODO: think of how to reconcile the position discrepancy -> close all position?
+            input('Press any key to continue ...')
+            # TODO: if there position with broker, close the position -> manually check the error
+            #       else manually check the error
+            
         else:
             cprint('No position discrepancy found', 'green')
 
@@ -474,7 +477,12 @@ class GoldenCrossEnhanceStop:
         self.eod_routine()
         quote_ctx.close()
 
-        time.sleep(6 * 60 * 60)  # sleep for 6 hours
+        if self.end_time.weekday() == 5:
+            self.tg_notify('Weekend, will resume trading on Monday')
+            time.sleep((48 + 6) * 60 * 60)
+        else:
+            time.sleep(6 * 60 * 60)  # sleep for 6 hours
+            
         self.init_trading_hours()
         try:
             self.run()
