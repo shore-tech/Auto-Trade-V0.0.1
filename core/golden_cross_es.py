@@ -482,13 +482,13 @@ class GoldenCrossEnhanceStop:
             time.sleep((48 + 6) * 60 * 60)
         else:
             time.sleep(6 * 60 * 60)  # sleep for 6 hours
-            
+
         self.init_trading_hours()
         try:
             self.run()
         except Exception as e:
             cprint(f'Error: {e}', 'red')
-            self.tg_notify(f'Error: {e}')
+            self.tg_notify(f'{TgEmoji.WARN_L2 * 6} \nError: {e} \n{TgEmoji.WARN_L2 * 6}')
             sys.exit()
 
 
