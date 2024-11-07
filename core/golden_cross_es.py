@@ -36,9 +36,7 @@ class GoldenCrossEnhanceStop:
         self.closing_position    = False
         self.cur_signal_close    = None
 
-        self.start_time = datetime.now(TimeZones.hk_tz)
-        self.start_time = self.start_time.replace(hour=9, minute=0, second=0)
-        self.end_time = self.start_time.replace(hour=2, minute=55, second=0)+timedelta(days=1)
+        self.init_trading_hours()
 
         self.trade_ctx = OpenFutureTradeContext(host='127.0.0.1', port=11111)
         # self.trade_ctx.unlock_trade('123456')  # unlock trade password for real trade environment
@@ -79,6 +77,10 @@ class GoldenCrossEnhanceStop:
         self.order_reconciliation()
         self.position_reconciliation()
 
+    def init_trading_hours(self):
+        self.start_time = datetime.now(TimeZones.hk_tz)
+        self.start_time = self.start_time.replace(hour=9, minute=0, second=0)
+        self.end_time = self.start_time.replace(hour=2, minute=55, second=0)+timedelta(days=1)
 
     # functions for opening position
     def generate_signal_open(self, last_k_dummy) -> int:
@@ -470,6 +472,16 @@ class GoldenCrossEnhanceStop:
 
         self.tg_notify('Market is closing, closing all outstanding orders')
         self.eod_routine()
+        quote_ctx.close()
+
+        time.sleep(6 * 60 * 60)  # sleep for 6 hours
+        self.init_trading_hours()
+        try:
+            self.run()
+        except Exception as e:
+            cprint(f'Error: {e}', 'red')
+            self.tg_notify(f'Error: {e}')
+            sys.exit()
 
 
 
